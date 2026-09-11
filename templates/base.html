@@ -1,0 +1,12 @@
+<!doctype html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>{% block title %}3bdoalsory{% endblock %}</title>
+<link rel="stylesheet" href="{{url_for('static',filename='style.css')}}">
+{% block head %}{% endblock %}</head><body>
+<div class="ambient a1"></div><div class="ambient a2"></div>
+{% if session.get("user_id") %}
+<header class="topbar"><a class="brand" href="{{'/admin' if session.role=='admin' else '/dashboard'}}"><i>◆</i>3bdo<span>alsory</span></a>
+<nav><span class="who">UID {{session.user_id}} · {{session.username}}</span>{% if session.role=='admin' %}<a class="nav-btn" href="/admin">لوحة الإدارة</a>{% else %}<a class="nav-btn" href="/dashboard">الخريطة</a><a class="nav-btn" href="/geofences">الزون</a>{% endif %}<a class="nav-btn nav-logout" href="/logout">خروج</a></nav></header>
+{% endif %}
+{% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="toast {{cat}}">{{msg}}</div>{% endfor %}{% endwith %}
+{% block content %}{% endblock %}{% block scripts %}{% endblock %}</body></html>
