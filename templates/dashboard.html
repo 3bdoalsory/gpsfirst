@@ -1,43 +1,74 @@
 {% extends "base.html" %}{% block head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>{% endblock %}
-{% block content %}<div class="client-shell">
+{% block content %}<div class="client-shell client-soft-blue">
 <aside class="fleet-panel glass"><div class="panel-head"><div><small>MY FLEET</small><h2>المركبات</h2></div><span class="counter">{{devices|length}}</span></div>
 <div class="search"><span>⌕</span><input id="carSearch" placeholder="ابحث عن سيارة أو ID"></div>
 <div id="vehicleList">{% for d in devices %}<button class="vehicle-row {{d.state}}" data-id="{{d.platform_id}}" data-search="{{d.name}} {{d.platform_id}} {{d.plate or ''}}" {% if d.state in ['expired','temporary'] %}disabled{% endif %}>
 <div class="vehicle-icon">⌁</div><div class="vehicle-text"><b>{{d.name}}</b><small>ID {{d.platform_id}} · {% if d.state=='temporary' %}إيقاف مؤقت{% elif d.state=='expired' %}الاشتراك منتهي{% elif d.state=='expiring' %}ينتهي قريبًا{% else %}فعال{% endif %}<br>لوحة {{d.plate or '-'}}<br><span class="subscription-date {% if d.subscription_soon %}soon{% endif %}">انتهاء الاشتراك: {{d.subscription_end|dmy}}</span></small></div>
 <span class="dot"></span></button>{% endfor %}</div>
 <div class="panel-menu"><a href="/geofences"><span>◉</span> الزون والتنبيهات</a><button id="openAudit"><span>☷</span> سجل خدمات السيارة</button></div></aside>
-<main class="map-stage"><div id="map"></div>
-<div class="map-switch glass"><button id="streetBtn" class="on">خريطة</button><button id="satBtn">قمر صناعي</button></div>
-<div id="vehicleInfo" class="vehicle-info glass"><div class="info-empty"><b>اختر مركبة</b><span>اضغط على إحدى المركبات من القائمة</span></div></div>
+<main class="map-stage"><div id="map"></div><div id="gmap" class="google-map-host"></div>
+<div class="map-switch glass">
+  <button id="streetBtn" class="on">خريطة</button><button id="satBtn">قمر صناعي</button>
+  <button id="googleBtn" {% if not google_maps_key %}disabled title="أضف GOOGLE_MAPS_API_KEY في إعدادات السيرفر"{% endif %}>Google Maps</button>
+</div>
+<div id="vehicleInfo" class="vehicle-info glass"><div class="info-empty"><b>اختر مركبة</b><span>اضغط على إحدى المركبات من القائمة أو على سهم المركبة</span></div></div>
 {% if notes %}<div class="alerts-box glass"><div class="alerts-title">تنبيهات حديثة <span>{{notes|length}}</span></div>{% for n in notes[:4] %}<p>{{n.message}}<small>{{n.created_at|dmytime}}</small></p>{% endfor %}</div>{% endif %}
 </main></div>
-<div id="serviceModal" class="modal"><div class="modal-card glass"><button class="close" data-close>×</button><div class="modal-icon">⚙</div><h3>خدمات السيارة</h3><p id="serviceCar"></p><button id="recordStop" class="danger-wide">إيقاف السيارة</button><small>يتم تسجيل الحساب وUser ID والتاريخ والنتيجة في سجل الخدمات.</small></div></div>
+<div id="serviceModal" class="modal"><div class="modal-card glass"><button class="close" data-close>×</button><div class="modal-icon">⚙</div><h3>خدمات السيارة</h3><p id="serviceCar"></p><button id="recordStop" class="danger-wide">إيقاف السيارة</button><small>هذا الزر يسجل الطلب فقط في سجل الخدمات ولا يرسل أمرًا فعليًا للمركبة.</small></div></div>
 <div id="auditModal" class="modal"><div class="modal-card wide glass"><button class="close" data-close>×</button><h3>سجل خدمات السيارة</h3><div class="table-wrap"><table><tr><th>الوقت</th><th>User ID</th><th>الحساب</th><th>السيارة</th><th>ID</th><th>الخدمة</th><th>الحالة</th></tr>{% for a in audits %}<tr><td>{{a.created_at|dmytime}}</td><td>{{a.user_id}}</td><td>{{a.username_snapshot}}</td><td>{{a.device_name}}</td><td>{{a.platform_id}}</td><td>إيقاف السيارة</td><td>{{a.result}}</td></tr>{% else %}<tr><td colspan="7">لا توجد عمليات مسجلة بعد</td></tr>{% endfor %}</table></div></div></div>
 {% endblock %}
 {% block scripts %}<script>
-const devices={{devices|tojson}}, fences={{fences|tojson}}, markers={}; let selected=null;
+const devices={{devices|tojson}}, fences={{fences|tojson}}, markers={}; let selected=null, popupTimer=null, googleMap=null, googleMarkers={}, mapMode='leaflet';
 const fmtDateTime=v=>{if(!v)return '-';let z=String(v).replace('T',' ').split(' '),d=z[0].split('-');return d.length===3?`${d[2]}/${d[1]}/${d[0]}${z[1]?' '+z[1].slice(0,5):''}`:v};
-function carIcon(heading,speed){return L.divIcon({className:'car-arrow-wrap',html:`<div class="car-arrow ${(speed||0)>1?'moving':''}" style="transform:rotate(${heading||0}deg)">▲</div>`,iconSize:[34,34],iconAnchor:[17,17]})}
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+function batteryHTML(level){
+ if(level===null||level===undefined||level==='') return `<div class="battery-line"><span>البطارية</span><span class="battery-shell unknown"><i style="width:0"></i><b>—</b></span></div>`;
+ let n=Math.max(0,Math.min(100,Number(level)));let cls=n<=20?'low':n<=50?'mid':'good';
+ return `<div class="battery-line"><span>البطارية</span><span class="battery-shell ${cls}"><i style="width:${n}%"></i><b>${n}%</b></span></div>`;
+}
+function carIcon(heading,speed,d){
+ const label=`${esc(d.name)} · ${esc(d.plate||'-')}`;
+ return L.divIcon({className:'car-arrow-wrap',html:`<div class="car-map-label">${label}</div><div class="car-arrow ${(speed||0)>1?'moving':''}" style="transform:rotate(${heading||0}deg)">▲</div>`,iconSize:[160,54],iconAnchor:[80,36]});
+}
 const map=L.map('map',{zoomControl:false}).setView([33.97,36.67],12);L.control.zoom({position:'bottomleft'}).addTo(map);
 const street=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
 const sat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19});
-const zoneGroup=L.featureGroup().addTo(map); fences.forEach(f=>{if(f.polygon&&f.polygon.length>=3)L.polygon(f.polygon,{color:'#29c7e8',weight:2,opacity:.8,fillColor:'#29c7e8',fillOpacity:.12}).bindTooltip(f.name,{sticky:true}).addTo(zoneGroup)});
-streetBtn.onclick=()=>{if(map.hasLayer(sat))map.removeLayer(sat);street.addTo(map);streetBtn.classList.add('on');satBtn.classList.remove('on')}
-satBtn.onclick=()=>{if(map.hasLayer(street))map.removeLayer(street);sat.addTo(map);satBtn.classList.add('on');streetBtn.classList.remove('on')}
-devices.forEach(d=>{if((d.state==='active'||d.state==='expiring')&&d.latitude!=null){markers[d.platform_id]=L.marker([d.latitude,d.longitude],{icon:carIcon(d.heading,d.speed)}).addTo(map).bindTooltip(d.name,{direction:'top'})}});
+const zoneGroup=L.featureGroup().addTo(map); fences.forEach(f=>{if(f.polygon&&f.polygon.length>=3)L.polygon(f.polygon,{color:'#58c6e8',weight:2,opacity:.72,fillColor:'#58c6e8',fillOpacity:.10}).bindTooltip(f.name,{sticky:true}).addTo(zoneGroup)});
+function showLeaflet(){mapMode='leaflet';gmap.style.display='none';map.style.display='block';setTimeout(()=>map.invalidateSize(),50)}
+streetBtn.onclick=()=>{showLeaflet();if(map.hasLayer(sat))map.removeLayer(sat);street.addTo(map);streetBtn.classList.add('on');satBtn.classList.remove('on');googleBtn.classList.remove('on')}
+satBtn.onclick=()=>{showLeaflet();if(map.hasLayer(street))map.removeLayer(street);sat.addTo(map);satBtn.classList.add('on');streetBtn.classList.remove('on');googleBtn.classList.remove('on')}
+function popupHtml(d,x){return `<div class="marker-detail"><b>${esc(d.name)}</b><span>اللوحة: ${esc(d.plate||'-')}</span><span>السرعة: ${Number(x.speed||0).toFixed(1)} km/h</span><span>الحالة: ${Number(x.speed||0)>1?'متحركة':'متوقفة'}</span><span>ACC: ${x.acc===1?'ON':x.acc===0?'OFF':'—'}</span>${batteryHTML(x.battery_level)}<span>آخر تحديث: ${fmtDateTime(x.created_at)}</span></div>`}
+function attachPopupBehavior(marker,d){
+ marker.on('click',async()=>{let x=await(await fetch('/api/latest/'+d.platform_id,{cache:'no-store'})).json();if(!x.available)return;marker.bindPopup(popupHtml(d,x),{closeButton:false,autoClose:true,className:'vehicle-popup'}).openPopup();clearTimeout(popupTimer)});
+ marker.on('popupopen',e=>{let el=e.popup.getElement();if(!el)return;el.addEventListener('mouseenter',()=>clearTimeout(popupTimer));el.addEventListener('mouseleave',()=>{clearTimeout(popupTimer);popupTimer=setTimeout(()=>map.closePopup(),650)})});
+}
+devices.forEach(d=>{if((d.state==='active'||d.state==='expiring')&&d.latitude!=null){let m=L.marker([d.latitude,d.longitude],{icon:carIcon(d.heading,d.speed,d)}).addTo(map);markers[d.platform_id]=m;attachPopupBehavior(m,d)}});
 async function selectVehicle(id){
- selected=id; document.querySelectorAll('.vehicle-row').forEach(x=>x.classList.toggle('selected',+x.dataset.id===id));
- const d=devices.find(x=>x.platform_id===id); const x=await(await fetch('/api/latest/'+id)).json(); if(!x.available)return;
- const pos=[x.latitude,x.longitude]; if(markers[id])markers[id].setLatLng(pos).setIcon(carIcon(x.heading,x.speed));else markers[id]=L.marker(pos,{icon:carIcon(x.heading,x.speed)}).addTo(map); map.flyTo(pos,16,{duration:1.2});
- vehicleInfo.innerHTML=`<div class="info-top"><div><small>المركبة المختارة</small><h3>${d.name}</h3></div><span class="live-pill">LIVE</span></div>
- <div class="info-grid"><div><small>ID</small><b>${id}</b></div><div><small>اللوحة</small><b>${d.plate||'-'}</b></div><div><small>السرعة</small><b>${x.speed??0} km/h</b></div><div><small>الحالة</small><b>${(x.speed??0)>1?'متحركة':'متوقفة'}</b></div><div><small>آخر تحديث</small><b>${fmtDateTime(x.created_at)}</b></div></div>
- <div class="info-actions"><a href="/history/${id}">سجل المسار</a><button onclick="openService(${id},'${d.name.replaceAll("'","")}')">خدمات السيارة</button></div>`;
+ selected=id;document.querySelectorAll('.vehicle-row').forEach(x=>x.classList.toggle('selected',+x.dataset.id===id));
+ const d=devices.find(x=>x.platform_id===id);const x=await(await fetch('/api/latest/'+id,{cache:'no-store'})).json();if(!x.available)return;
+ const pos=[x.latitude,x.longitude];if(markers[id])markers[id].setLatLng(pos).setIcon(carIcon(x.heading,x.speed,d));else{markers[id]=L.marker(pos,{icon:carIcon(x.heading,x.speed,d)}).addTo(map);attachPopupBehavior(markers[id],d)}
+ if(mapMode==='leaflet')map.flyTo(pos,16,{duration:1.0}); else if(googleMap){googleMap.setCenter({lat:x.latitude,lng:x.longitude});googleMap.setZoom(16)}
+ vehicleInfo.innerHTML=`<div class="info-top"><div><small>المركبة المختارة</small><h3>${esc(d.name)}</h3></div><span class="live-pill">LIVE</span></div>
+ <div class="info-grid"><div><small>ID</small><b>${id}</b></div><div><small>اللوحة</small><b>${esc(d.plate||'-')}</b></div><div><small>السرعة</small><b>${Number(x.speed||0).toFixed(1)} km/h</b></div><div><small>الحالة</small><b>${Number(x.speed||0)>1?'متحركة':'متوقفة'}</b></div><div><small>ACC</small><b>${x.acc===1?'ON':x.acc===0?'OFF':'—'}</b></div><div><small>آخر تحديث</small><b>${fmtDateTime(x.created_at)}</b></div></div>
+ ${batteryHTML(x.battery_level)}
+ <div class="info-actions"><a href="/history/${id}">سجل المسار</a><button onclick="openService(${id},'${esc(d.name).replaceAll("'","")}')">خدمات السيارة</button></div>`;
 }
 document.querySelectorAll('.vehicle-row:not(:disabled)').forEach(b=>b.onclick=()=>selectVehicle(+b.dataset.id));
 carSearch.oninput=e=>document.querySelectorAll('.vehicle-row').forEach(b=>b.style.display=b.dataset.search.toLowerCase().includes(e.target.value.toLowerCase())?'':'none');
 function openService(id,name){selected=id;serviceCar.textContent=name+' · ID '+id;serviceModal.classList.add('show')}
 recordStop.onclick=async()=>{if(!selected)return;if(!confirm('هل تريد تسجيل طلب إيقاف السيارة في سجل الخدمات؟'))return;let x=await(await fetch('/service/'+selected,{method:'POST'})).json();alert(x.message||'تم');serviceModal.classList.remove('show')}
 openAudit.onclick=()=>auditModal.classList.add('show');document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.modal').classList.remove('show'));
-setInterval(()=>devices.filter(d=>d.state==='active'||d.state==='expiring').forEach(d=>fetch('/api/latest/'+d.platform_id).then(r=>r.json()).then(x=>{if(x.available&&markers[d.platform_id])markers[d.platform_id].setLatLng([x.latitude,x.longitude]).setIcon(carIcon(x.heading,x.speed))})),5000);
-</script>{% endblock %}
+setInterval(()=>devices.filter(d=>d.state==='active'||d.state==='expiring').forEach(d=>fetch('/api/latest/'+d.platform_id,{cache:'no-store'}).then(r=>r.json()).then(x=>{if(!x.available)return;if(markers[d.platform_id])markers[d.platform_id].setLatLng([x.latitude,x.longitude]).setIcon(carIcon(x.heading,x.speed,d));if(selected===d.platform_id)selectVehicle(d.platform_id);if(googleMarkers[d.platform_id])googleMarkers[d.platform_id].setPosition({lat:x.latitude,lng:x.longitude})})),5000);
+</script>
+{% if google_maps_key %}
+<script>
+function initGoogleFleet(){
+ googleMap=new google.maps.Map(document.getElementById('gmap'),{center:{lat:33.97,lng:36.67},zoom:12,mapTypeId:'roadmap',streetViewControl:false,mapTypeControl:false});
+ devices.forEach(d=>{if((d.state==='active'||d.state==='expiring')&&d.latitude!=null){let gm=new google.maps.Marker({position:{lat:d.latitude,lng:d.longitude},map:googleMap,title:(d.name+' · '+(d.plate||'-'))});gm.addListener('click',()=>selectVehicle(d.platform_id));googleMarkers[d.platform_id]=gm}});
+ googleBtn.onclick=()=>{mapMode='google';map.style.display='none';gmap.style.display='block';googleBtn.classList.add('on');streetBtn.classList.remove('on');satBtn.classList.remove('on');if(selected){let d=devices.find(x=>x.platform_id===selected);if(d&&d.latitude!=null){googleMap.setCenter({lat:d.latitude,lng:d.longitude});googleMap.setZoom(16)}}};
+}
+</script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key={{google_maps_key|e}}&callback=initGoogleFleet"></script>
+{% endif %}
+{% endblock %}
