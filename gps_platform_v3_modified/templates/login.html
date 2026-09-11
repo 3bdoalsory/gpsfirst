@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}3bdoalsory · تسجيل الدخول{% endblock %}
+{% block content %}
+<div class="login-shell login-reference-page">
+  <div class="login-brand-overlay" aria-hidden="true">
+    <img src="{{url_for('static',filename='gps_logo_only.png')}}" alt="">
+    <div class="brand-name">3bdo<span>alsory</span></div>
+    <div class="brand-sub">SMART FLEET PLATFORM</div>
+    <div class="brand-ar">منصة ذكية لإدارة المركبات وتتبعها بأمان واحترافية</div>
+  </div>
+  <div class="login-slogan-overlay" aria-hidden="true">
+    <b>مركباتك .. دائماً تحت السيطرة</b>
+    <span>TRACK · CONTROL · PROTECT</span>
+  </div>
+  <div class="login-benefits-overlay" aria-hidden="true">
+    <span><b>أمان أعلى</b><small>HIGHER SECURITY</small></span>
+    <span><b>إدارة أسهل</b><small>EASIER MANAGEMENT</small></span>
+    <span><b>مستقبل أفضل</b><small>A BRIGHTER FUTURE</small></span>
+  </div>
+  <div class="globe-live-animation" aria-hidden="true">
+    <svg class="globe-motion-svg" viewBox="0 0 1000 650" preserveAspectRatio="none">
+      <defs>
+        <filter id="blueGlow" x="-200%" y="-200%" width="500%" height="500%">
+          <feGaussianBlur stdDeviation="4" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <linearGradient id="orbitGlow" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#22c9ff" stop-opacity="0.10"/>
+          <stop offset="0.5" stop-color="#6ceaff" stop-opacity="0.75"/>
+          <stop offset="1" stop-color="#178fff" stop-opacity="0.12"/>
+        </linearGradient>
+      </defs>
+      <!-- Smooth closed Bezier loops: continuous tangents, no sharp corners. -->
+      <path id="orbitA" class="live-orbit orbit-a" d="M70,325 C70,175 265,95 505,95 C745,95 940,175 940,325 C940,475 745,555 505,555 C265,555 70,475 70,325Z"/>
+      <path id="orbitB" class="live-orbit orbit-b" d="M120,390 C120,205 315,115 535,125 C755,135 915,235 900,390 C885,545 705,620 485,610 C265,600 120,545 120,390Z"/>
+      <path id="orbitC" class="live-orbit orbit-c" d="M95,265 C205,115 405,80 615,125 C825,170 945,285 895,410 C845,535 635,575 425,530 C215,485 -15,415 95,265Z"/>
+      <path id="orbitD" class="live-orbit orbit-d" d="M265,585 C145,470 155,250 300,125 C445,0 700,20 835,150 C970,280 930,485 785,585 C640,685 385,700 265,585Z"/>
+      <path id="orbitE" class="live-orbit orbit-e" d="M100,430 C225,565 445,610 650,560 C855,510 955,365 875,235 C795,105 565,70 360,125 C155,180 -25,295 100,430Z"/>
+
+      <g class="moving-node node-1" filter="url(#blueGlow)"><circle r="7"/><animateMotion dur="13s" repeatCount="indefinite"><mpath href="#orbitA"/></animateMotion></g>
+      <g class="moving-node node-2" filter="url(#blueGlow)"><circle r="5"/><animateMotion dur="17s" begin="-5s" repeatCount="indefinite"><mpath href="#orbitB"/></animateMotion></g>
+      <g class="moving-node node-3" filter="url(#blueGlow)"><circle r="6"/><animateMotion dur="20s" begin="-11s" repeatCount="indefinite"><mpath href="#orbitC"/></animateMotion></g>
+      <g class="moving-node node-4" filter="url(#blueGlow)"><circle r="5"/><animateMotion dur="23s" begin="-8s" repeatCount="indefinite"><mpath href="#orbitD"/></animateMotion></g>
+      <g class="moving-node node-5" filter="url(#blueGlow)"><circle r="6"/><animateMotion dur="18s" begin="-14s" repeatCount="indefinite"><mpath href="#orbitE"/></animateMotion></g>
+      <g class="moving-node node-6" filter="url(#blueGlow)"><circle r="4"/><animateMotion dur="26s" begin="-17s" repeatCount="indefinite"><mpath href="#orbitA"/></animateMotion></g>
+    </svg>
+  </div>
+
+  <div class="login-painted-mask" aria-hidden="true"></div>
+
+  <form method="post" class="login-card login-reference-card glass" id="loginForm" autocomplete="on">
+    <div class="mini-logo"><span></span></div>
+    <h2>تسجيل الدخول</h2>
+    <p>أهلاً بك في منصة التحكم الخاصة بك</p>
+
+    <div class="login-field">
+      <span class="field-icon">♙</span>
+      <input name="username" id="username" required autocomplete="username" placeholder="اسم المستخدم">
+    </div>
+
+    <div class="login-field">
+      <span class="field-icon">▣</span>
+      <input type="password" name="password" id="password" required autocomplete="current-password" placeholder="كلمة المرور">
+      <button type="button" class="password-eye" id="passwordEye" aria-label="إظهار كلمة المرور">◉</button>
+    </div>
+
+    <button class="primary login-submit" type="submit"><span class="login-arrow">←</span><b>دخول إلى المنصة</b></button>
+
+    <div class="login-options">
+      <a href="#" id="forgotLink">هل نسيت كلمة المرور؟</a>
+      <label class="remember">تذكرني <input type="checkbox" name="remember" id="remember"></label>
+    </div>
+  </form>
+
+  <div id="forgotModal" class="modal">
+    <div class="modal-card glass forgot-card">
+      <button type="button" class="close" id="forgotClose">×</button>
+      <h3>استرجاع كلمة المرور</h3>
+      <p>لاسترجاع كلمة المرور تواصل مع الإدارة على الرقم:</p>
+      <a class="support-number" href="tel:0993832349">0993832349</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const eye = document.getElementById('passwordEye');
+  const password = document.getElementById('password');
+  const username = document.getElementById('username');
+  const remember = document.getElementById('remember');
+  const savedUser = localStorage.getItem('gps_remembered_username');
+
+  if (savedUser) {
+    username.value = savedUser;
+    remember.checked = true;
+  }
+
+  eye.addEventListener('click', () => {
+    password.type = password.type === 'password' ? 'text' : 'password';
+  });
+
+  document.getElementById('forgotLink').addEventListener('click', e => {
+    e.preventDefault();
+    document.getElementById('forgotModal').classList.add('show');
+  });
+  document.getElementById('forgotClose').addEventListener('click', () => {
+    document.getElementById('forgotModal').classList.remove('show');
+  });
+
+  document.getElementById('loginForm').addEventListener('submit', () => {
+    if (remember.checked) localStorage.setItem('gps_remembered_username', username.value.trim());
+    else localStorage.removeItem('gps_remembered_username');
+  });
+
+  window.addEventListener('wheel', e => { if (e.ctrlKey) e.preventDefault(); }, { passive:false });
+  window.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && ['+','=','-','0'].includes(e.key)) e.preventDefault();
+  });
+  ['gesturestart','gesturechange','gestureend'].forEach(type => {
+    document.addEventListener(type, e => e.preventDefault(), { passive:false });
+  });
+})();
+</script>
+{% endblock %}
