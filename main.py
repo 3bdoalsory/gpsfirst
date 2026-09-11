@@ -98,33 +98,138 @@ def logout():
     session.clear()
     return redirect("/")
 
+def nmea_to_decimal(value, hemisphere):
+    """Convert SinoTrack/NMEA DDMM.MMMM or DDDMM.MMMM to decimal degrees."""
+    raw = float(value)
+    degrees = int(raw // 100)
+    minutes = raw - (degrees * 100)
+    decimal = degrees + (minutes / 60.0)
+    if hemisphere.upper() in ("S", "W"):
+        decimal = -decimal
+    return decimal
+
+
+def parse_sinotrack_hq(packet):
+    """Parse the HQ V8 GPS packet fields used by the platform."""
+    packet = (packet or "").strip()
+    if not packet.startswith("*HQ,"):
+        raise ValueError("unsupported_packet")
+
+    parts = packet.rstrip("#").split(",")
+    if len(parts) < 12:
+        raise ValueError("incomplete_packet")
+
+    device_id = parts[1].strip()
+    gps_status = parts[4].strip().upper()
+    if gps_status != "A":
+        raise ValueError("gps_fix_invalid")
+
+    latitude = nmea_to_decimal(parts[5], parts[6])
+    longitude = nmea_to_decimal(parts[7], parts[8])
+    speed = float(parts[9] or 0)
+    heading = float(parts[10] or 0)
+
+    # The tracker is configured on timezone 0, so this timestamp is UTC-like
+    # and is stored in the same ISO format already used by gps_data.
+    tracker_time = datetime.strptime(parts[11] + parts[3], "%d%m%y%H%M%S")
+
+    return {
+        "device_id": device_id,
+        "latitude": latitude,
+        "longitude": longitude,
+        "speed": speed,
+        "heading": heading,
+        "created_at": tracker_time.isoformat(timespec="seconds"),
+    }
+
+
 @app.post("/api/tracker")
 def receive_tracker():
-    """
-    يستقبل بيانات التتبع القادمة من وسيط TCP بصيغة JSON.
-    في هذه المرحلة نحفظ الباكيت كما هو في السجل فقط للتأكد من نجاح الربط.
-    """
+    """Receive a SinoTrack packet from the TCP gateway, parse it and store GPS data."""
     data = request.get_json(silent=True)
-
     if not isinstance(data, dict):
         return jsonify(ok=False, error="invalid_json"), 400
 
     raw_packet = str(data.get("raw_packet", "")).strip()
-    device_id = str(data.get("device_id", "")).strip()
-
+    gateway_device_id = str(data.get("device_id", "")).strip()
     if not raw_packet:
         return jsonify(ok=False, error="raw_packet_required"), 400
 
-    print("=" * 70)
-    print("[TRACKER GATEWAY] Packet received")
-    print("Device ID:", device_id or "unknown")
-    print("Raw packet:", raw_packet)
-    print("=" * 70)
+    try:
+        point = parse_sinotrack_hq(raw_packet)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    except Exception as exc:
+        print("[TRACKER PARSE ERROR]", repr(exc), raw_packet)
+        return jsonify(ok=False, error="packet_parse_failed"), 400
 
-    return jsonify(
-        ok=True,
-        message="tracker_packet_received"
-    ), 200
+    if gateway_device_id and gateway_device_id != point["device_id"]:
+        return jsonify(ok=False, error="device_id_mismatch"), 400
+
+    c = db()
+    try:
+        device = c.execute(
+            "SELECT * FROM devices WHERE device_id=?",
+            (point["device_id"],)
+        ).fetchone()
+
+        if not device:
+            print("[TRACKER] Parsed but device is not registered:", point["device_id"])
+            return jsonify(
+                ok=True,
+                message="tracker_packet_parsed",
+                stored=False,
+                reason="device_not_registered",
+                **point
+            ), 200
+
+        state = device_state(device)
+        if state in ("expired", "temporary", "final"):
+            print("[TRACKER] Packet ignored because device state is", state)
+            return jsonify(
+                ok=True,
+                message="tracker_packet_ignored",
+                stored=False,
+                reason=state,
+                device_id=point["device_id"]
+            ), 200
+
+        c.execute(
+            """INSERT INTO gps_data(device_id,latitude,longitude,speed,heading,created_at)
+               VALUES(?,?,?,?,?,?)""",
+            (
+                point["device_id"],
+                point["latitude"],
+                point["longitude"],
+                point["speed"],
+                point["heading"],
+                point["created_at"],
+            )
+        )
+        c.commit()
+
+        print("=" * 70)
+        print("[TRACKER] GPS point stored")
+        print("Device ID:", point["device_id"])
+        print("Latitude:", point["latitude"])
+        print("Longitude:", point["longitude"])
+        print("Speed:", point["speed"])
+        print("Heading:", point["heading"])
+        print("Tracker time:", point["created_at"])
+        print("=" * 70)
+
+        return jsonify(
+            ok=True,
+            message="tracker_packet_stored",
+            stored=True,
+            **point
+        ), 200
+    except sqlite3.Error as exc:
+        c.rollback()
+        print("[TRACKER DATABASE ERROR]", repr(exc))
+        return jsonify(ok=False, error="database_error"), 500
+    finally:
+        c.close()
 
 
 @app.get("/dashboard")
