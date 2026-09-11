@@ -9,6 +9,11 @@ app = Flask(__name__)
 app.secret_key = os.getenv("GPS_SECRET_KEY", "dev-change-me")
 DB = Path(__file__).with_name("gpsplatform.db")
 
+# Ensure the SQLite database schema is upgraded to the current V4 version
+# every time the web service starts (including Gunicorn on Render).
+from database import init as init_database
+init_database()
+
 def db():
     c = sqlite3.connect(DB)
     c.row_factory = sqlite3.Row
