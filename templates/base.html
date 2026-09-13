@@ -9,66 +9,16 @@
 <nav><span class="who">UID {{session.user_id}} · {{session.username}}</span>{% if session.role=='admin' %}<a class="nav-btn" href="/admin">لوحة الإدارة</a>{% else %}<a class="nav-btn" href="/dashboard">الخريطة</a><a class="nav-btn" href="/geofences">الزون</a>{% endif %}<a class="nav-btn nav-logout" href="/logout">خروج</a></nav></header>
 {% endif %}
 {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="toast {{cat}}">{{msg}}</div>{% endfor %}{% endwith %}
-{% block content %}{% endblock %}
+{% block content %}{% endblock %}{% block scripts %}{% endblock %}
 <script>
-(function(){
-  function isMapTarget(t){ return !!(t && t.closest && t.closest('#map,#hmap,.leaflet-container,.google-map-host')); }
-  window.addEventListener('wheel', e => { if(e.ctrlKey && !isMapTarget(e.target)) e.preventDefault(); }, {passive:false});
-  window.addEventListener('keydown', e => {
-    if((e.ctrlKey||e.metaKey) && ['+','=','-','0'].includes(e.key) && !isMapTarget(document.activeElement)) e.preventDefault();
-  });
-  ['gesturestart','gesturechange','gestureend'].forEach(type => document.addEventListener(type, e => {
-    if(!isMapTarget(e.target)) e.preventDefault();
-  }, {passive:false}));
-
-  function normalizeDate(v){
-    v=(v||'').trim();
-    if(!v) return '';
-    let clean=v.replace(/[.\-]/g,'/').replace(/\s+/g,'');
-    let d,m,y;
-    if(/^\d{8}$/.test(clean)){ d=clean.slice(0,2);m=clean.slice(2,4);y=clean.slice(4); }
-    else {
-      let p=clean.split('/');
-      if(p.length!==3) return v;
-      [d,m,y]=p;
-    }
-    let dt=new Date(Number(y),Number(m)-1,Number(d));
-    if(dt.getFullYear()!=Number(y)||dt.getMonth()!=Number(m)-1||dt.getDate()!=Number(d)) return v;
-    return String(d).padStart(2,'0')+'/'+String(m).padStart(2,'0')+'/'+String(y).padStart(4,'0');
-  }
-
-  function normalizeTime(v){
-    v=(v||'').trim().toLowerCase().replace(/\s+/g,' ');
-    if(!v) return '';
-    let mer=null;
-    if(/\b(am|a\.m\.|ص)\b/.test(v)) mer='am';
-    if(/\b(pm|p\.m\.|م)\b/.test(v)) mer='pm';
-    v=v.replace(/\b(am|pm|a\.m\.|p\.m\.|ص|م)\b/g,'').trim();
-    let h,min='0';
-    if(/^\d{3,4}$/.test(v)){
-      h=v.length===3?v.slice(0,1):v.slice(0,2); min=v.slice(-2);
-    }else if(/^\d{1,2}:\d{1,2}$/.test(v)){
-      [h,min]=v.split(':');
-    }else if(/^\d{1,2}$/.test(v)){ h=v; min='0'; }
-    else return v;
-    h=Number(h); min=Number(min);
-    if(mer){
-      if(h<1||h>12||min>59) return v;
-      if(mer==='pm' && h!==12) h+=12;
-      if(mer==='am' && h===12) h=0;
-    }else if(h>23||min>59) return v;
-    return String(h).padStart(2,'0')+':'+String(min).padStart(2,'0');
-  }
-  window.normalizeSmartDate=normalizeDate;
-  window.normalizeSmartTime=normalizeTime;
-  document.addEventListener('blur', e=>{
-    if(e.target.classList.contains('smart-date')) e.target.value=normalizeDate(e.target.value);
-    if(e.target.classList.contains('smart-time')) e.target.value=normalizeTime(e.target.value);
-  }, true);
-
-  window.addEventListener('pageshow', e=>{
-    if(e.persisted && document.body.dataset.auth==='1') location.reload();
-  });
-})();
-</script>
-{% block scripts %}{% endblock %}</body></html>
+// Enter advances through form fields; only the last field submits the form.
+document.addEventListener('keydown',e=>{
+ if(e.key!=='Enter'||e.shiftKey||e.ctrlKey||e.altKey||e.metaKey)return;
+ const el=e.target, form=el.closest&&el.closest('form');
+ if(!form||el.tagName==='TEXTAREA'||el.type==='submit'||el.type==='button')return;
+ const fields=[...form.querySelectorAll('input,select,textarea,button[type="submit"],button:not([type])')].filter(x=>!x.disabled&&x.offsetParent!==null&&x.type!=='hidden');
+ const i=fields.indexOf(el); if(i<0)return; e.preventDefault();
+ const next=fields.slice(i+1).find(x=>x.tagName!=='BUTTON');
+ if(next){next.focus(); if(next.select)next.select();} else {const submit=form.querySelector('button[type="submit"],button:not([type]),input[type="submit"]'); if(submit)submit.click(); else form.requestSubmit();}
+});
+</script></body></html>

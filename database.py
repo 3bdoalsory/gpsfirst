@@ -10,11 +10,6 @@ def connect():
     c.execute("PRAGMA foreign_keys=ON")
     return c
 
-def add_column_if_missing(c, table, column, definition):
-    cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
-    if column not in cols:
-        c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
 def init():
     c = connect()
     c.executescript("""
@@ -25,6 +20,7 @@ def init():
       role TEXT NOT NULL DEFAULT 'client',
       phone TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
+      allow_immobilize INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -38,19 +34,6 @@ def init():
       service_status TEXT NOT NULL DEFAULT 'active',
       subscription_start DATE,
       subscription_end DATE,
-      last_battery_level INTEGER,
-      last_battery_source TEXT,
-      last_battery_at TIMESTAMP,
-      last_acc INTEGER,
-      last_gps_valid INTEGER,
-      last_satellites INTEGER,
-      last_gsm_signal INTEGER,
-      last_status_hex TEXT,
-      last_mcc INTEGER,
-      last_mnc INTEGER,
-      last_lac INTEGER,
-      last_cell_id INTEGER,
-      telemetry_updated_at TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
@@ -62,38 +45,10 @@ def init():
       longitude REAL,
       speed REAL DEFAULT 0,
       heading REAL DEFAULT 0,
-      gps_valid INTEGER,
-      acc INTEGER,
-      battery_level INTEGER,
-      battery_source TEXT,
-      satellites INTEGER,
-      gsm_signal INTEGER,
-      status_hex TEXT,
-      mcc INTEGER,
-      mnc INTEGER,
-      lac INTEGER,
-      cell_id INTEGER,
-      extra_json TEXT,
       raw_data TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_gps_device_time ON gps_data(device_id, created_at);
-
-    CREATE TABLE IF NOT EXISTS tracker_events(
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT,
-      packet_type TEXT,
-      battery_level INTEGER,
-      gps_valid INTEGER,
-      acc INTEGER,
-      satellites INTEGER,
-      gsm_signal INTEGER,
-      status_hex TEXT,
-      raw_data TEXT NOT NULL,
-      parsed_json TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_tracker_events_device_time ON tracker_events(device_id, created_at);
 
     CREATE TABLE IF NOT EXISTS notifications(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +61,21 @@ def init():
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS immobilize_requests(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      username_snapshot TEXT NOT NULL,
+      device_pk INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_stop',
+      requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      ready_at TIMESTAMP,
+      completed_at TIMESTAMP,
+      result TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(device_pk) REFERENCES devices(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_immobilize_device_status ON immobilize_requests(device_pk,status);
+
     CREATE TABLE IF NOT EXISTS service_audit(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
@@ -117,47 +87,22 @@ def init():
     );
     """)
 
-    # Safe upgrade for databases from the previous version.
-    for col, definition in [
-        ("plate", "TEXT DEFAULT ''"),
-        ("last_battery_level", "INTEGER"),
-        ("last_battery_source", "TEXT"),
-        ("last_battery_at", "TIMESTAMP"),
-        ("last_acc", "INTEGER"),
-        ("last_gps_valid", "INTEGER"),
-        ("last_satellites", "INTEGER"),
-        ("last_gsm_signal", "INTEGER"),
-        ("last_status_hex", "TEXT"),
-        ("last_mcc", "INTEGER"),
-        ("last_mnc", "INTEGER"),
-        ("last_lac", "INTEGER"),
-        ("last_cell_id", "INTEGER"),
-        ("telemetry_updated_at", "TIMESTAMP"),
-    ]:
-        add_column_if_missing(c, "devices", col, definition)
+    # Upgrade existing V3 databases without deleting users/devices/GPS history.
+    ucols={r[1] for r in c.execute("PRAGMA table_info(users)")}
+    if "allow_immobilize" not in ucols:
+        c.execute("ALTER TABLE users ADD COLUMN allow_immobilize INTEGER NOT NULL DEFAULT 0")
+    dcols={r[1] for r in c.execute("PRAGMA table_info(devices)")}
+    if "plate" not in dcols:
+        c.execute("ALTER TABLE devices ADD COLUMN plate TEXT DEFAULT ''")
+    if "vehicle_model" not in dcols:
+        c.execute("ALTER TABLE devices ADD COLUMN vehicle_model TEXT DEFAULT ''")
+    if "vehicle_color" not in dcols:
+        c.execute("ALTER TABLE devices ADD COLUMN vehicle_color TEXT DEFAULT ''")
 
-    for col, definition in [
-        ("gps_valid", "INTEGER"),
-        ("acc", "INTEGER"),
-        ("battery_level", "INTEGER"),
-        ("battery_source", "TEXT"),
-        ("satellites", "INTEGER"),
-        ("gsm_signal", "INTEGER"),
-        ("status_hex", "TEXT"),
-        ("mcc", "INTEGER"),
-        ("mnc", "INTEGER"),
-        ("lac", "INTEGER"),
-        ("cell_id", "INTEGER"),
-        ("extra_json", "TEXT"),
-        ("raw_data", "TEXT"),
-    ]:
-        add_column_if_missing(c, "gps_data", col, definition)
-
-    # Upgrade old circular geofences without deleting data.
-    gcols = {r[1] for r in c.execute("PRAGMA table_info(geofences)")}
+    # V3 used circular geofences. Replace only that table with polygon schema.
+    gcols={r[1] for r in c.execute("PRAGMA table_info(geofences)")}
     if gcols and "polygon_json" not in gcols:
         c.execute("ALTER TABLE geofences RENAME TO geofences_v3_circle_backup")
-
     c.execute("""
     CREATE TABLE IF NOT EXISTS geofences(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,18 +128,15 @@ def init():
       FOREIGN KEY(device_pk) REFERENCES devices(id) ON DELETE CASCADE
     )
     """)
-
+    # Migrate legacy one-device zones into the new multi-device relation.
     for r in c.execute("SELECT id,device_pk FROM geofences WHERE device_pk IS NOT NULL").fetchall():
         c.execute("INSERT OR IGNORE INTO geofence_devices(geofence_id,device_pk) VALUES(?,?)",(r[0],r[1]))
 
     if not c.execute("SELECT 1 FROM users WHERE username='admin'").fetchone():
         c.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)",
                   ("admin", generate_password_hash("1234"), "admin"))
-
-    c.commit()
-    c.close()
+    c.commit(); c.close()
     print("Database ready:", DB)
     print("Admin: admin / 1234")
 
-if __name__ == "__main__":
-    init()
+if __name__ == "__main__": init()
