@@ -11,7 +11,7 @@
 <div class="map-switch glass"><button id="streetBtn" class="on">خريطة</button><button id="satBtn">قمر صناعي</button></div>
 <div id="vehicleInfo" class="vehicle-info glass"><div class="info-empty"><b>اختر مركبة</b><span>اضغط على إحدى المركبات من القائمة</span></div></div>
 {% if notes %}<div class="alerts-box glass"><div class="alerts-title">تنبيهات حديثة <span>{{notes|length}}</span></div>{% for n in notes[:4] %}<p>{{n.message}}<small>{{n.created_at|dmytime}}</small></p>{% endfor %}</div>{% endif %}
-</main></div>
+</main><nav class="mobile-bottom-nav"><button id="mobileFleetNav" type="button">🚗 المركبات</button><button id="mobileMapNav" type="button">🗺 الخريطة</button><a href="/geofences">◉ الزون</a></nav></div>
 <div id="serviceModal" class="modal"><div class="modal-card glass"><button class="close" data-close>×</button><div class="modal-icon">⚙</div><h3>خدمات السيارة</h3><p id="serviceCar"></p><button id="recordStop" class="danger-wide">إيقاف السيارة</button><small>يتم تسجيل الحساب وUser ID والتاريخ والنتيجة في سجل الخدمات.</small></div></div>
 <div id="auditModal" class="modal"><div class="modal-card wide glass"><button class="close" data-close>×</button><h3>سجل خدمات السيارة</h3><div class="table-wrap"><table><tr><th>الوقت</th><th>User ID</th><th>الحساب</th><th>السيارة</th><th>ID</th><th>الخدمة</th><th>الحالة</th></tr>{% for a in audits %}<tr><td>{{a.created_at|dmytime}}</td><td>{{a.user_id}}</td><td>{{a.username_snapshot}}</td><td>{{a.device_name}}</td><td>{{a.platform_id}}</td><td>إيقاف السيارة</td><td>{{a.result}}</td></tr>{% else %}<tr><td colspan="7">لا توجد عمليات مسجلة بعد</td></tr>{% endfor %}</table></div></div></div>
 {% endblock %}
@@ -26,6 +26,7 @@ const zoneGroup=L.featureGroup().addTo(map); fences.forEach(f=>{if(f.polygon&&f.
 streetBtn.onclick=()=>{if(map.hasLayer(sat))map.removeLayer(sat);street.addTo(map);streetBtn.classList.add('on');satBtn.classList.remove('on')}
 satBtn.onclick=()=>{if(map.hasLayer(street))map.removeLayer(street);sat.addTo(map);satBtn.classList.add('on');streetBtn.classList.remove('on')}
 devices.forEach(d=>{if((d.state==='active'||d.state==='expiring')&&d.latitude!=null){markers[d.platform_id]=L.marker([d.latitude,d.longitude],{icon:carIcon(d.heading,d.speed)}).addTo(map).bindTooltip(d.name,{direction:'top'})}});
+const initialMarkers=Object.values(markers);if(initialMarkers.length)map.fitBounds(L.featureGroup(initialMarkers).getBounds().pad(.18));
 async function selectVehicle(id){
  if(selected===id){
    selected=null; document.querySelectorAll('.vehicle-row').forEach(x=>x.classList.remove('selected'));
@@ -45,10 +46,11 @@ carSearch.oninput=e=>document.querySelectorAll('.vehicle-row').forEach(b=>b.styl
 function openService(id,name){selected=id;serviceCar.textContent=name+' · ID '+id;serviceModal.classList.add('show')}
 recordStop.onclick=async()=>{if(!selected)return;if(!confirm('هل تريد إرسال طلب إيقاف المركبة؟ إذا كانت متحركة سيبقى الطلب بانتظار توقفها.'))return;let x=await(await fetch('/service/'+selected,{method:'POST'})).json();alert(x.message||'تم');serviceModal.classList.remove('show')}
 openAudit.onclick=()=>auditModal.classList.add('show');document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.modal').classList.remove('show'));
-setInterval(()=>devices.filter(d=>d.state==='active'||d.state==='expiring').forEach(d=>fetch('/api/latest/'+d.platform_id).then(r=>r.json()).then(x=>{if(x.available&&markers[d.platform_id])markers[d.platform_id].setLatLng([x.latitude,x.longitude]).setIcon(carIcon(x.heading,x.speed))})),5000);
+setInterval(()=>devices.filter(d=>d.state==='active'||d.state==='expiring').forEach(d=>fetch('/api/latest/'+d.platform_id).then(r=>r.json()).then(x=>{if(!x.available)return;const pos=[x.latitude,x.longitude];if(markers[d.platform_id])markers[d.platform_id].setLatLng(pos).setIcon(carIcon(x.heading,x.speed));else markers[d.platform_id]=L.marker(pos,{icon:carIcon(x.heading,x.speed)}).addTo(map).bindTooltip(d.name,{direction:'top'});if(selected===d.platform_id){const speedEl=vehicleInfo.querySelector('.info-grid div:nth-last-child(3) b');if(speedEl)speedEl.textContent=(x.speed??0)+' km/h';}}).catch(()=>{})),5000);
 if(window.innerWidth<=900){
- const fp=document.getElementById('fleetPanel'),ft=document.getElementById('mobileFleetToggle');
- ft.onclick=()=>fp.classList.toggle('mobile-open');
+ const fp=document.getElementById('fleetPanel'),ft=document.getElementById('mobileFleetToggle'),fn=document.getElementById('mobileFleetNav'),mn=document.getElementById('mobileMapNav');
+ const toggleFleet=()=>fp.classList.toggle('mobile-open');
+ if(ft)ft.onclick=toggleFleet;if(fn)fn.onclick=toggleFleet;if(mn)mn.onclick=()=>{fp.classList.remove('mobile-open');setTimeout(()=>map.invalidateSize(),120)};
  document.querySelectorAll('.vehicle-row:not(:disabled)').forEach(b=>b.addEventListener('click',()=>fp.classList.remove('mobile-open')));
 }
 </script>{% endblock %}

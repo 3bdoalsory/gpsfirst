@@ -3,17 +3,94 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from pathlib import Path
 from datetime import date, timedelta, datetime
 from functools import wraps
-import sqlite3, os, json, math
+import sqlite3, os, json, math, time
+from database import init as init_database
 
 app = Flask(__name__)
 app.secret_key = os.getenv("GPS_SECRET_KEY", "dev-change-me")
-DB = Path(__file__).with_name("gpsplatform.db")
+DB = Path(os.getenv("GPS_DB_PATH", str(Path(__file__).with_name("gpsplatform.db"))))
+init_database()
+_LAST_GPS_CLEANUP = 0.0
 
 def db():
     c = sqlite3.connect(DB)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     return c
+
+
+
+def setting_float(c, key, default):
+    try:
+        r=c.execute("SELECT value FROM system_settings WHERE key=?",(key,)).fetchone()
+        return float(r["value"]) if r else float(default)
+    except Exception:
+        return float(default)
+
+def stop_thresholds(c):
+    return (setting_float(c,"stop_min_seconds",20),
+            setting_float(c,"stop_max_speed_kmh",1),
+            setting_float(c,"stop_max_drift_m",25))
+
+def point_in_polygon(lat,lon,poly):
+    inside=False; j=len(poly)-1
+    for i in range(len(poly)):
+        yi,xi=poly[i]; yj,xj=poly[j]
+        hit=((xi>lon)!=(xj>lon)) and (lat < (yj-yi)*(lon-xi)/((xj-xi) or 1e-12)+yi)
+        if hit: inside=not inside
+        j=i
+    return inside
+
+def process_geofences(c,d,lat,lon):
+    if not d["user_id"]: return
+    rows=c.execute("""SELECT g.* FROM geofences g JOIN geofence_devices gd ON gd.geofence_id=g.id
+                      WHERE gd.device_pk=? AND g.user_id=? AND g.is_active=1""",(d["id"],d["user_id"])).fetchall()
+    for f in rows:
+        try: poly=json.loads(f["polygon_json"])
+        except Exception: poly=[]
+        if len(poly)<3: continue
+        inside=point_in_polygon(lat,lon,poly)
+        kind=f'geofence:{f["id"]}:{"in" if inside else "out"}'
+        last=c.execute("""SELECT kind FROM notifications WHERE user_id=? AND device_pk=? AND kind LIKE ?
+                          ORDER BY id DESC LIMIT 1""",(d["user_id"],d["id"],f'geofence:{f["id"]}:%')).fetchone()
+        if last and last["kind"]==kind: continue
+        ok=(inside and f["alert_type"] in ("enter","both")) or ((not inside) and f["alert_type"] in ("exit","both"))
+        if ok:
+            c.execute("""INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)""",
+                      (d["user_id"],d["id"],kind,"تنبيه منطقة",f'المركبة {d["platform_id"]} {"دخلت" if inside else "خرجت من"} منطقة {f["name"]}'))
+
+def refresh_pending_immobilize(c,d):
+    r=c.execute("SELECT * FROM immobilize_requests WHERE device_pk=? AND status='pending_stop' ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
+    if not r: return
+    if confirmed_stopped(c,d["device_id"]):
+        c.execute("UPDATE immobilize_requests SET status='ready_for_provider',ready_at=CURRENT_TIMESTAMP WHERE id=?",(r["id"],))
+        c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
+                  (r["user_id"],r["username_snapshot"],d["id"],"vehicle_stop_request","ready_for_provider"))
+
+def cleanup_old_gps(c):
+    global _LAST_GPS_CLEANUP
+    now=time.time()
+    if now-_LAST_GPS_CLEANUP < 3600: return
+    days=max(1,int(setting_float(c,"history_retention_days",90)))
+    c.execute(f"DELETE FROM gps_data WHERE created_at < datetime('now','-{days} days')")
+    _LAST_GPS_CLEANUP=now
+
+def parse_acc(value):
+    if value is None or value=="": return None
+    if isinstance(value,bool): return 1 if value else 0
+    txt=str(value).strip().lower()
+    if txt in ("1","true","on","yes","acc_on"): return 1
+    if txt in ("0","false","off","no","acc_off"): return 0
+    return None
+
+def parse_h02_raw(raw):
+    p=raw.strip().split(",")
+    if len(p)<11 or not p[0].startswith("*HQ") or p[4]!="A": raise ValueError("invalid packet")
+    def dec(x,d,lon=False):
+        n=3 if lon else 2; v=float(x[:n])+float(x[n:])/60
+        return -v if d in ("S","W") else v
+    return {"device_id":p[1],"latitude":dec(p[5],p[6]),"longitude":dec(p[7],p[8],True),
+            "speed":round(float(p[9] or 0)*1.852,2),"heading":float(p[10] or 0),"speed_unit":"kmh","raw_data":raw}
 
 def login_required(admin=False):
     def deco(fn):
@@ -71,17 +148,20 @@ def immobilize_allowed_for_current_user(c):
     return bool(u and u["allow_immobilize"])
 
 def confirmed_stopped(c, device_id):
-    rows=c.execute("SELECT latitude,longitude,speed,created_at FROM gps_data WHERE device_id=? ORDER BY id DESC LIMIT 3",(device_id,)).fetchall()
+    rows=c.execute("SELECT latitude,longitude,speed,acc,created_at FROM gps_data WHERE device_id=? ORDER BY id DESC LIMIT 3",(device_id,)).fetchall()
     if len(rows)<2: return False
     try:
+        min_seconds,max_speed,max_drift=stop_thresholds(c)
         newest=datetime.fromisoformat(rows[0]["created_at"]); oldest=datetime.fromisoformat(rows[-1]["created_at"])
-        if (newest-oldest).total_seconds()<20: return False
-        if any((r["speed"] or 0)>1 for r in rows): return False
+        if (newest-oldest).total_seconds()<min_seconds: return False
+        if any((r["speed"] or 0)>max_speed for r in rows): return False
+        known_acc=[r["acc"] for r in rows if r["acc"] is not None]
+        if known_acc and any(int(v)==1 for v in known_acc): return False
         def hav(a,b):
             lat1,lon1,lat2,lon2=map(math.radians,[a["latitude"],a["longitude"],b["latitude"],b["longitude"]])
             h=math.sin((lat2-lat1)/2)**2+math.cos(lat1)*math.cos(lat2)*math.sin((lon2-lon1)/2)**2
             return 6371008.8*2*math.asin(min(1,math.sqrt(h)))
-        return all(r["latitude"] is not None and r["longitude"] is not None for r in rows) and hav(rows[0],rows[-1])<=25
+        return all(r["latitude"] is not None and r["longitude"] is not None for r in rows) and hav(rows[0],rows[-1])<=max_drift
     except Exception: return False
 
 def can_access_device(d):
@@ -159,6 +239,49 @@ def dashboard():
         fence_data.append(z)
     return render_template("dashboard.html", devices=devices, notes=notes, audits=audits, fences=fence_data)
 
+@app.post("/api/tracker")
+def tracker_ingest():
+    expected=os.getenv("GPS_INGEST_TOKEN","").strip()
+    if expected:
+        auth=request.headers.get("Authorization","")
+        supplied=auth[7:].strip() if auth.lower().startswith("bearer ") else request.headers.get("X-GPS-Token","").strip()
+        if supplied != expected:
+            return jsonify(ok=False,error="unauthorized"),401
+    payload=request.get_json(silent=True)
+    if not isinstance(payload,dict):
+        if request.form:
+            payload=request.form.to_dict()
+        else:
+            raw=request.get_data(as_text=True).strip()
+            try: payload=parse_h02_raw(raw)
+            except Exception: return jsonify(ok=False,error="invalid_payload"),400
+    try:
+        did=str(payload.get("device_id") or payload.get("id") or payload.get("imei") or "").strip()
+        lat=float(payload.get("latitude",payload.get("lat")))
+        lon=float(payload.get("longitude",payload.get("lon",payload.get("lng"))))
+        speed=float(payload.get("speed",0) or 0)
+        unit=str(payload.get("speed_unit",payload.get("unit","kmh"))).strip().lower()
+        if unit in ("knot","knots","kt","kts"): speed*=1.852
+        heading=float(payload.get("heading",payload.get("course",0)) or 0)
+        acc=parse_acc(payload.get("acc"))
+        raw_data=payload.get("raw_data",payload.get("raw",json.dumps(payload,ensure_ascii=False)))
+        if not did or not (-90<=lat<=90) or not (-180<=lon<=180): raise ValueError
+    except Exception:
+        return jsonify(ok=False,error="invalid_payload"),400
+    c=db(); d=c.execute("SELECT * FROM devices WHERE device_id=?",(did,)).fetchone()
+    if not d:
+        c.close(); return jsonify(ok=False,error="unknown_device"),404
+    st=device_state(d)
+    if st in ("expired","temporary","final") or not d["user_id"]:
+        c.close(); return jsonify(ok=False,error="device_unavailable",state=st),409
+    c.execute("INSERT INTO gps_data(device_id,latitude,longitude,speed,heading,acc,raw_data) VALUES(?,?,?,?,?,?,?)",
+              (did,lat,lon,round(speed,2),heading,acc,str(raw_data)))
+    refresh_pending_immobilize(c,d)
+    process_geofences(c,d,lat,lon)
+    cleanup_old_gps(c)
+    c.commit(); c.close()
+    return jsonify(ok=True)
+
 @app.get("/api/latest/<int:pid>")
 @login_required()
 def latest(pid):
@@ -166,7 +289,7 @@ def latest(pid):
     if not can_access_device(d): c.close(); return jsonify(error="forbidden"),403
     st=device_state(d)
     if st in ("expired","temporary","final"): c.close(); return jsonify(available=False,state=st)
-    p=c.execute("""SELECT latitude,longitude,speed,heading,created_at FROM gps_data
+    p=c.execute("""SELECT latitude,longitude,speed,heading,acc,created_at FROM gps_data
                    WHERE device_id=? ORDER BY id DESC LIMIT 1""",(d["device_id"],)).fetchone()
     c.close()
     return jsonify(available=bool(p),state=st,**(dict(p) if p else {}))
@@ -192,7 +315,7 @@ def history_api(pid):
     c=db(); d=c.execute("SELECT * FROM devices WHERE platform_id=?",(pid,)).fetchone()
     if not can_access_device(d) or device_state(d) in ("expired","temporary","final"):
         c.close(); return jsonify(error="forbidden"),403
-    rows=c.execute("""SELECT latitude,longitude,speed,heading,created_at FROM gps_data
+    rows=c.execute("""SELECT latitude,longitude,speed,heading,acc,created_at FROM gps_data
                       WHERE device_id=? AND created_at BETWEEN ? AND ?
                       ORDER BY created_at""",(d["device_id"],request.args["start"],request.args["end"])).fetchall()
     c.close()
@@ -288,8 +411,9 @@ def admin():
                          ORDER BY d.platform_id""").fetchall()
     audits=c.execute("""SELECT a.*,d.platform_id,d.name device_name FROM service_audit a
                         JOIN devices d ON d.id=a.device_pk ORDER BY a.id DESC LIMIT 100""").fetchall()
+    settings={r["key"]:r["value"] for r in c.execute("SELECT key,value FROM system_settings").fetchall()}
     c.close()
-    return render_template("admin.html",clients=clients,devices=devices,audits=audits)
+    return render_template("admin.html",clients=clients,devices=devices,audits=audits,settings=settings)
 
 @app.post("/admin/password")
 @login_required(admin=True)
@@ -310,9 +434,9 @@ def admin_password():
 def add_user():
     c=db()
     try:
-        c.execute("INSERT INTO users(username,password_hash,role,phone) VALUES(?,?,'client',?)",
+        c.execute("INSERT INTO users(username,password_hash,role,phone,allow_immobilize) VALUES(?,?,'client',?,?)",
                   (request.form["username"].strip(),generate_password_hash(request.form["password"]),
-                   request.form.get("phone","").strip()))
+                   request.form.get("phone","").strip(),1 if request.form.get("allow_immobilize") else 0))
         c.commit();flash("تم إنشاء الحساب","ok")
     except sqlite3.IntegrityError: flash("اسم المستخدم موجود مسبقًا","error")
     c.close();return redirect("/admin#accounts")
@@ -382,6 +506,45 @@ def final_device(pid):
                   ("active" if d["service_status"]=="final" else "final",pid));c.commit()
     c.close();return redirect("/admin#devices")
 
+@app.post("/admin/device/<int:pid>/unlink")
+@login_required(admin=True)
+def unlink_device(pid):
+    c=db(); c.execute("UPDATE devices SET user_id=NULL WHERE platform_id=?",(pid,)); c.commit(); c.close()
+    flash("تم فك ربط المركبة عن العميل","ok"); return redirect("/admin#devices")
+
+@app.post("/admin/device/<int:pid>/delete")
+@login_required(admin=True)
+def delete_device(pid):
+    c=db(); d=c.execute("SELECT id,device_id FROM devices WHERE platform_id=?",(pid,)).fetchone()
+    if not d: c.close(); flash("المركبة غير موجودة","error"); return redirect("/admin#devices")
+    c.execute("UPDATE geofences SET device_pk=NULL WHERE device_pk=?",(d["id"],))
+    c.execute("DELETE FROM geofence_devices WHERE device_pk=?",(d["id"],))
+    c.execute("DELETE FROM notifications WHERE device_pk=?",(d["id"],))
+    c.execute("DELETE FROM immobilize_requests WHERE device_pk=?",(d["id"],))
+    c.execute("DELETE FROM service_audit WHERE device_pk=?",(d["id"],))
+    c.execute("DELETE FROM gps_data WHERE device_id=?",(d["device_id"],))
+    c.execute("DELETE FROM devices WHERE id=?",(d["id"],))
+    c.commit(); c.close(); flash("تم حذف المركبة وبياناتها من المنصة","ok"); return redirect("/admin#devices")
+
+@app.post("/admin/settings")
+@login_required(admin=True)
+def admin_settings():
+    vals={
+      "stop_min_seconds":(request.form.get("stop_min_seconds"),5,300),
+      "stop_max_speed_kmh":(request.form.get("stop_max_speed_kmh"),0,20),
+      "stop_max_drift_m":(request.form.get("stop_max_drift_m"),1,500),
+      "history_retention_days":(request.form.get("history_retention_days"),1,365),
+    }
+    c=db()
+    try:
+        for k,(raw,lo,hi) in vals.items():
+            v=float(raw); v=max(lo,min(hi,v))
+            c.execute("INSERT INTO system_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(k,str(v)))
+        c.commit(); flash("تم حفظ إعدادات النظام","ok")
+    except Exception:
+        flash("تحقق من قيم إعدادات النظام","error")
+    c.close(); return redirect("/admin#settings")
+
 @app.post("/service/<int:pid>")
 @login_required()
 def service_request(pid):
@@ -404,6 +567,18 @@ def service_request(pid):
     c.commit();c.close()
     msg="المركبة متوقفة وتم تجهيز الطلب لطبقة التحكم" if status=="ready_for_provider" else "تم حفظ الطلب وسيبقى بانتظار توقف المركبة"
     return jsonify(ok=True,status=status,message=msg)
+
+@app.post("/api/immobilize/<int:pid>/cancel")
+@login_required()
+def immobilize_cancel(pid):
+    c=db(); d=c.execute("SELECT * FROM devices WHERE platform_id=?",(pid,)).fetchone()
+    if not can_access_device(d): c.close(); return jsonify(error="forbidden"),403
+    r=c.execute("SELECT * FROM immobilize_requests WHERE device_pk=? AND status IN ('pending_stop','ready_for_provider') ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
+    if not r: c.close(); return jsonify(ok=False,message="لا يوجد طلب قابل للإلغاء"),404
+    c.execute("UPDATE immobilize_requests SET status='cancelled',completed_at=CURRENT_TIMESTAMP,result='cancelled' WHERE id=?",(r["id"],))
+    c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
+              (session["user_id"],session["username"],d["id"],"vehicle_stop_request","cancelled"))
+    c.commit(); c.close(); return jsonify(ok=True,status="cancelled",message="تم إلغاء الطلب")
 
 @app.get("/api/immobilize/<int:pid>")
 @login_required()
