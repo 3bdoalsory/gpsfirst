@@ -1,9 +1,9 @@
-from flask import Flask, render_template, request, redirect, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, session, flash, jsonify, send_file
 from werkzeug.security import check_password_hash, generate_password_hash
 from pathlib import Path
 from datetime import date, timedelta, datetime
 from functools import wraps
-import sqlite3, os, json, math, time
+import sqlite3, os, json, math, time, io
 from database import init as init_database
 
 app = Flask(__name__)
@@ -11,6 +11,12 @@ app.secret_key = os.getenv("GPS_SECRET_KEY", "dev-change-me")
 DB = Path(os.getenv("GPS_DB_PATH", str(Path(__file__).with_name("gpsplatform.db"))))
 init_database()
 _LAST_GPS_CLEANUP = 0.0
+
+@app.after_request
+def cache_static_assets(response):
+    if request.path.startswith('/static/'):
+        response.headers['Cache-Control']='public, max-age=604800, immutable'
+    return response
 
 def db():
     c = sqlite3.connect(DB)
@@ -40,6 +46,27 @@ def point_in_polygon(lat,lon,poly):
         if hit: inside=not inside
         j=i
     return inside
+
+def signal_status(last_update, speed=0, timeout_seconds=120):
+    if not last_update: return "offline"
+    try:
+        dt=datetime.fromisoformat(str(last_update).replace("Z","+00:00").replace("+00:00",""))
+        if (datetime.utcnow()-dt).total_seconds() > timeout_seconds: return "offline"
+    except Exception:
+        return "offline"
+    return "moving" if float(speed or 0) > 1 else "stopped"
+
+def sync_subscription_notifications(c, user_id):
+    rows=c.execute("SELECT id,platform_id,name,subscription_end FROM devices WHERE user_id=? AND service_status!='final' AND subscription_end IS NOT NULL",(user_id,)).fetchall()
+    today=date.today()
+    for d in rows:
+        try:
+            end=date.fromisoformat(d["subscription_end"]); days=(end-today).days
+        except Exception: continue
+        if 0 <= days <= 30:
+            kind=f'subscription:{d["id"]}:{end.isoformat()}'
+            if not c.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind=?",(user_id,kind)).fetchone():
+                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(user_id,d["id"],kind,"اقتراب انتهاء الاشتراك",f'اشتراك المركبة {d["platform_id"]} · {d["name"]} ينتهي خلال {days} يوم'))
 
 def process_geofences(c,d,lat,lon):
     if not d["user_id"]: return
@@ -214,8 +241,11 @@ def dashboard():
       WHERE d.user_id=? AND d.service_status!='final'
       ORDER BY d.platform_id
     """,(session["user_id"],)).fetchall()
-    notes=c.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 8",
+    sync_subscription_notifications(c, session["user_id"]); c.commit()
+    notes=c.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 50",
                     (session["user_id"],)).fetchall()
+    unread_count=sum(1 for n in notes if not n["is_read"])
+    geo_notes=[n for n in notes if str(n["kind"]).startswith("geofence:")][:4]
     audits=c.execute("""SELECT a.*,d.platform_id,d.name device_name
                         FROM service_audit a JOIN devices d ON d.id=a.device_pk
                         WHERE a.user_id=? ORDER BY a.id DESC LIMIT 20""",
@@ -226,7 +256,7 @@ def dashboard():
     c.close()
     devices=[]
     for x in rows:
-        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False
+        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False; z["signal_status"]=signal_status(x["last_update"],x["speed"])
         if x["subscription_end"]:
             try: z["subscription_soon"]=(date.fromisoformat(x["subscription_end"])-date.today()).days <= 30
             except ValueError: pass
@@ -237,7 +267,7 @@ def dashboard():
         try: z["polygon"]=json.loads(z.get("polygon_json") or "[]")
         except Exception: z["polygon"]=[]
         fence_data.append(z)
-    return render_template("dashboard.html", devices=devices, notes=notes, audits=audits, fences=fence_data)
+    return render_template("dashboard.html", devices=devices, notes=notes, geo_notes=geo_notes, unread_count=unread_count, audits=audits, fences=fence_data)
 
 @app.post("/api/tracker")
 def tracker_ingest():
@@ -292,7 +322,8 @@ def latest(pid):
     p=c.execute("""SELECT latitude,longitude,speed,heading,acc,created_at FROM gps_data
                    WHERE device_id=? ORDER BY id DESC LIMIT 1""",(d["device_id"],)).fetchone()
     c.close()
-    return jsonify(available=bool(p),state=st,**(dict(p) if p else {}))
+    payload=dict(p) if p else {}
+    return jsonify(available=bool(p),state=st,signal_status=signal_status(payload.get("created_at"),payload.get("speed",0)),**payload)
 
 @app.get("/history/<int:pid>")
 @login_required()
@@ -412,8 +443,42 @@ def admin():
     audits=c.execute("""SELECT a.*,d.platform_id,d.name device_name FROM service_audit a
                         JOIN devices d ON d.id=a.device_pk ORDER BY a.id DESC LIMIT 100""").fetchall()
     settings={r["key"]:r["value"] for r in c.execute("SELECT key,value FROM system_settings").fetchall()}
+    today=date.today(); expired=[]; expiring=[]
+    for row in devices:
+        if not row["subscription_end"]: continue
+        try: days=(date.fromisoformat(row["subscription_end"])-today).days
+        except Exception: continue
+        item=dict(row); item["days_left"]=days
+        if days < 0: expired.append(item)
+        elif days <= 30: expiring.append(item)
+    expired.sort(key=lambda x:x.get("subscription_end") or "")
+    expiring.sort(key=lambda x:x.get("subscription_end") or "")
     c.close()
-    return render_template("admin.html",clients=clients,devices=devices,audits=audits,settings=settings)
+    return render_template("admin.html",clients=clients,devices=devices,audits=audits,settings=settings,expired=expired,expiring=expiring)
+
+@app.post("/api/notifications/read")
+@login_required()
+def notifications_read():
+    if session.get("role") == "admin": return jsonify(ok=False),403
+    c=db(); c.execute("UPDATE notifications SET is_read=1 WHERE user_id=? AND is_read=0",(session["user_id"],)); c.commit(); c.close()
+    return jsonify(ok=True)
+
+@app.get("/admin/devices.xlsx")
+@login_required(admin=True)
+def export_devices_xlsx():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment
+    c=db(); rows=c.execute("""SELECT d.platform_id,d.device_id,d.name,d.plate,d.vehicle_model,d.vehicle_color,u.username,d.subscription_start,d.subscription_end,d.service_status,d.created_at FROM devices d LEFT JOIN users u ON u.id=d.user_id ORDER BY d.platform_id""").fetchall(); c.close()
+    wb=Workbook(); ws=wb.active; ws.title="الأجهزة والاشتراكات"; ws.sheet_view.rightToLeft=True
+    headers=["ID الشركة","Device ID الحقيقي","المركبة","اللوحة","الموديل","اللون","العميل","بداية الاشتراك","نهاية الاشتراك","الحالة","تاريخ الإضافة"]
+    ws.append(headers)
+    for cell in ws[1]: cell.font=Font(bold=True); cell.alignment=Alignment(horizontal="center")
+    for r in rows: ws.append([r[k] or "" for k in ["platform_id","device_id","name","plate","vehicle_model","vehicle_color","username","subscription_start","subscription_end","service_status","created_at"]])
+    widths=[14,22,22,16,20,14,20,18,18,16,22]
+    for i,w in enumerate(widths,1): ws.column_dimensions[chr(64+i)].width=w
+    ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0)
+    return send_file(bio,as_attachment=True,download_name=f"gps_devices_{date.today().isoformat()}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.post("/admin/password")
 @login_required(admin=True)
