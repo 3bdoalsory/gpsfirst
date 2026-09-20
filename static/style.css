@@ -79,8 +79,7 @@ input,select,button{font:inherit}input,select{width:100%;background:#071522;bord
 }
 /* Keep the approved page composition; suppress old synthetic backdrop layers. */
 .login-reference-page:before,.login-reference-page:after,.login-reference-page>.login-bg-radar,.login-reference-page>.login-bg-globe{display:none!important}
-/* Prevent browser gesture zoom on the app surface where supported. */
-html,body{touch-action:pan-x pan-y}
+/* Browser zoom and pinch zoom are intentionally allowed. */
 
 
 /* Login size lock: prevent accidental mouse-driven resizing/dragging of UI elements. */
@@ -340,7 +339,6 @@ html,body{touch-action:pan-x pan-y}
 /* Disable native resizing/dragging of the login visual pieces. */
 .login-reference-card,.login-reference-card *{resize:none!important}
 .login-reference-card img,.login-reference-page img{-webkit-user-drag:none!important;user-drag:none!important}
-html,body{touch-action:pan-x pan-y!important}
 
 @media(max-width:900px){
   .login-reference-page{background-size:cover!important;background-position:center!important}
@@ -546,3 +544,13 @@ html,body{touch-action:pan-x pan-y!important}
 @media(max-width:900px){.stats{grid-template-columns:1fr 1fr!important}.replay-bar{grid-template-columns:44px 1fr 68px}.replay-bar #replayTime,.replay-bar #replayEnd{display:none}.notification-panel{max-height:260px}}
 .car-arrow.stopped{color:#38a9ff!important;text-shadow:0 0 12px #38a9ff!important}.car-arrow.offline{color:#737f8d!important;text-shadow:none!important}.car-arrow.moving{color:#36df92!important;text-shadow:0 0 12px #36df92!important}
 .client-expiry-notice{margin-top:12px;padding:10px;border:1px solid #f2c15a33;background:#f2c15a0b;border-radius:12px;display:grid;gap:5px}.client-expiry-notice b{font-size:12px;color:#f0c96e}.client-expiry-notice span{font-size:11px;color:#aebfca}
+
+/* V5 modal/list refinements */
+.stats{grid-template-columns:repeat(5,minmax(0,1fr))}
+.stat button{margin-top:9px}
+.section-actions{display:flex;gap:8px;flex-wrap:wrap}
+.modal-card.wide{max-height:88vh;overflow:auto}.modal-card.wide .export-xlsx{display:inline-flex;margin-top:14px}
+.notification-modal-card{width:min(520px,94vw);max-height:80vh;overflow:auto;text-align:right;padding:0;border-radius:18px}.notification-modal .notification-head{padding:14px 16px}.notification-modal .notification-item{padding:12px 16px}
+.zone-device-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;background:#0b2037aa;border:1px solid #2d668066;color:#dceaf7;padding:10px 12px;border-radius:12px}.zone-device-toggle span{font-size:18px}.zone-device-checks.collapsible[hidden]{display:none!important}
+@media(max-width:1100px){.stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:700px){.stats{grid-template-columns:1fr 1fr}.modal-card.wide{width:96vw;padding:18px}}

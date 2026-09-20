@@ -480,6 +480,33 @@ def export_devices_xlsx():
     bio=io.BytesIO(); wb.save(bio); bio.seek(0)
     return send_file(bio,as_attachment=True,download_name=f"gps_devices_{date.today().isoformat()}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+def _subscription_export(kind):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment
+    c=db(); rows=c.execute("""SELECT d.platform_id,d.device_id,d.name,d.plate,d.vehicle_model,d.vehicle_color,u.username,d.subscription_start,d.subscription_end,d.service_status FROM devices d LEFT JOIN users u ON u.id=d.user_id WHERE d.subscription_end IS NOT NULL AND d.subscription_end!='' ORDER BY d.subscription_end""").fetchall(); c.close()
+    today=date.today(); selected=[]
+    for r in rows:
+        try: days=(date.fromisoformat(r["subscription_end"])-today).days
+        except Exception: continue
+        if (kind=="expired" and days<0) or (kind=="expiring" and 0<=days<=30): selected.append((r,days))
+    wb=Workbook(); ws=wb.active; ws.title="منتهية" if kind=="expired" else "قريبة الانتهاء"; ws.sheet_view.rightToLeft=True
+    headers=["ID الشركة","Device ID الحقيقي","المركبة","اللوحة","الموديل","اللون","العميل","بداية الاشتراك","نهاية الاشتراك","الحالة / المتبقي"]
+    ws.append(headers)
+    for cell in ws[1]: cell.font=Font(bold=True); cell.alignment=Alignment(horizontal="center")
+    for r,days in selected: ws.append([r["platform_id"],r["device_id"],r["name"],r["plate"] or "",r["vehicle_model"] or "",r["vehicle_color"] or "",r["username"] or "بدون عميل",r["subscription_start"] or "",r["subscription_end"],"منتهي" if days<0 else f"متبقي {days} يوم"])
+    for col,w in zip("ABCDEFGHIJ",[14,22,22,16,20,14,20,18,18,18]): ws.column_dimensions[col].width=w
+    ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    return send_file(out,as_attachment=True,download_name=f"subscriptions_{kind}_{date.today().isoformat()}.xlsx",mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.get("/admin/subscriptions/expired.xlsx")
+@login_required(admin=True)
+def export_expired_subscriptions(): return _subscription_export("expired")
+
+@app.get("/admin/subscriptions/expiring.xlsx")
+@login_required(admin=True)
+def export_expiring_subscriptions(): return _subscription_export("expiring")
+
 @app.post("/admin/password")
 @login_required(admin=True)
 def admin_password():
