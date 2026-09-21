@@ -523,7 +523,7 @@ input,select,button{font:inherit}input,select{width:100%;background:#071522;bord
 /* 2026-09-12 approved functional/mobile improvements */
 .mobile-fleet-toggle{display:none}.trip-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}.trip-stats>div{padding:14px;border-radius:13px}.trip-stats small,.trip-stats b{display:block}.trip-stats small{color:#7890a7;margin-bottom:5px}.trip-stats b{font-size:19px}.history-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(330px,.75fr);gap:12px}.speed-panel{padding:14px;border-radius:17px;min-width:0}.speed-title small,.speed-title b{display:block}.speed-title small{color:#5fbcd0;font-size:10px;letter-spacing:2px}.speed-title b{margin:3px 0 10px}.speed-chart{height:280px;display:grid;place-items:center;overflow:hidden}.speed-chart svg{width:100%;height:100%;overflow:visible}.chart-grid line{stroke:#ffffff18;stroke-width:1}.chart-grid text,.chart-x text,.axis-unit{fill:#8da5ba;font-size:11px}.speed-line{fill:none;stroke:#35d7f3;stroke-width:3;stroke-linejoin:round;stroke-linecap:round}.speed-chart circle{fill:#8cf1ff;stroke:#082033;stroke-width:1}.chart-empty{color:#71889f;text-align:center}
 @media(max-width:900px){
- body:not(.admin-page){overflow:hidden}.topbar{height:58px}.client-shell{display:block;height:calc(100dvh - 58px);position:relative}.map-stage{height:100%;width:100%}.fleet-panel{position:absolute;z-index:1200;left:8px;right:8px;bottom:8px;height:min(68dvh,560px);border-radius:22px!important;padding:16px!important;transform:translateY(calc(100% + 20px));transition:transform .28s ease;box-shadow:0 -12px 45px #0009}.fleet-panel.mobile-open{transform:translateY(0)}.fleet-panel .panel-head small,.fleet-panel .search,.fleet-panel .vehicle-icon{display:block}.fleet-panel .vehicle-row{grid-template-columns:42px 1fr 12px;padding:11px}.fleet-panel .panel-menu a,.fleet-panel .panel-menu button{font-size:13px}.mobile-fleet-toggle{display:block;position:absolute;z-index:1250;left:14px;bottom:16px;border-radius:999px;padding:12px 17px;background:#0c2940e8;color:#d9f8ff;border:1px solid #39d5f266;box-shadow:0 8px 28px #0008}.fleet-panel.mobile-open~.map-stage+.mobile-fleet-toggle{display:none}.vehicle-info{right:10px;left:10px;bottom:72px;width:auto;max-height:38dvh;overflow:auto;padding:12px}.info-grid{grid-template-columns:repeat(2,1fr)!important}.alerts-box{display:none}.map-switch{top:10px;right:10px}.topbar .brand{font-size:15px}.topbar nav .nav-btn:not(.nav-logout){display:none}.history-grid{grid-template-columns:1fr}.trip-stats{grid-template-columns:1fr 1fr}.page{padding:12px;overflow:auto;height:calc(100dvh - 58px)}#hmap{height:48dvh}.speed-chart{height:250px}.history-toolbar{align-items:stretch}.history-toolbar label{width:100%}.date-time-pair .date-input{width:calc(65% - 3px)}.date-time-pair .time-input{width:calc(35% - 3px)}
+ body{overflow:hidden}.topbar{height:58px}.client-shell{display:block;height:calc(100dvh - 58px);position:relative}.map-stage{height:100%;width:100%}.fleet-panel{position:absolute;z-index:1200;left:8px;right:8px;bottom:8px;height:min(68dvh,560px);border-radius:22px!important;padding:16px!important;transform:translateY(calc(100% + 20px));transition:transform .28s ease;box-shadow:0 -12px 45px #0009}.fleet-panel.mobile-open{transform:translateY(0)}.fleet-panel .panel-head small,.fleet-panel .search,.fleet-panel .vehicle-icon{display:block}.fleet-panel .vehicle-row{grid-template-columns:42px 1fr 12px;padding:11px}.fleet-panel .panel-menu a,.fleet-panel .panel-menu button{font-size:13px}.mobile-fleet-toggle{display:block;position:absolute;z-index:1250;left:14px;bottom:16px;border-radius:999px;padding:12px 17px;background:#0c2940e8;color:#d9f8ff;border:1px solid #39d5f266;box-shadow:0 8px 28px #0008}.fleet-panel.mobile-open~.map-stage+.mobile-fleet-toggle{display:none}.vehicle-info{right:10px;left:10px;bottom:72px;width:auto;max-height:38dvh;overflow:auto;padding:12px}.info-grid{grid-template-columns:repeat(2,1fr)!important}.alerts-box{display:none}.map-switch{top:10px;right:10px}.topbar .brand{font-size:15px}.topbar nav .nav-btn:not(.nav-logout){display:none}.history-grid{grid-template-columns:1fr}.trip-stats{grid-template-columns:1fr 1fr}.page{padding:12px;overflow:auto;height:calc(100dvh - 58px)}#hmap{height:48dvh}.speed-chart{height:250px}.history-toolbar{align-items:stretch}.history-toolbar label{width:100%}.date-time-pair .date-input{width:calc(65% - 3px)}.date-time-pair .time-input{width:calc(35% - 3px)}
 }
 
 /* Next-base account control permission */
@@ -588,23 +588,32 @@ body>.notification-modal .notification-head{font-size:20px!important;position:st
 .zone-color-picker{display:inline-grid!important;place-items:center;width:48px;height:48px;position:relative;cursor:pointer}.zone-color-picker .zone-color{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none}.zone-color-dot{display:block;width:34px;height:34px;border-radius:50%;background:var(--zone-color);border:3px solid rgba(255,255,255,.85);box-shadow:0 0 0 2px rgba(41,199,232,.2),0 4px 16px rgba(0,0,0,.3);cursor:pointer}.zone-color-picker:focus-within .zone-color-dot{outline:2px solid #29c7e8;outline-offset:3px}
 
 
-/* ===== V9.3 usability refinements: geofence color, history chart, admin mobile scroll ===== */
-.zone-color-picker{width:52px!important;height:52px!important;position:relative!important;display:inline-grid!important;place-items:center!important;border-radius:50%!important}
-.zone-color-picker .zone-color{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;opacity:0!important;cursor:pointer!important;pointer-events:auto!important;z-index:2!important;padding:0!important;border:0!important}
-.zone-color-dot{width:38px!important;height:38px!important;border-radius:50%!important;background:var(--zone-color)!important;border:3px solid rgba(255,255,255,.9)!important;box-shadow:0 0 0 2px rgba(41,199,232,.24),0 5px 18px rgba(0,0,0,.34)!important;pointer-events:none!important;z-index:1!important}
-.history-grid{grid-template-columns:minmax(0,1.3fr) minmax(420px,1fr)!important}
+/* ===== V9.4 verified usability changes, based directly on V9.2 ===== */
+/* Geofence color control: unmistakable circular swatch; native picker overlays the circle. */
+.zone-color-picker{display:inline-grid!important;place-items:center!important;width:54px!important;height:54px!important;position:relative!important;border-radius:50%!important;overflow:visible!important;cursor:pointer!important;vertical-align:middle!important}
+.zone-color-picker .zone-color{position:absolute!important;inset:0!important;width:54px!important;height:54px!important;opacity:0!important;cursor:pointer!important;pointer-events:auto!important;z-index:3!important;border:0!important;padding:0!important}
+.zone-color-dot{display:block!important;width:42px!important;height:42px!important;min-width:42px!important;min-height:42px!important;border-radius:50%!important;background:var(--zone-color)!important;border:3px solid rgba(255,255,255,.92)!important;box-shadow:0 0 0 3px rgba(41,199,232,.20),0 5px 18px rgba(0,0,0,.38)!important;pointer-events:none!important;z-index:2!important}
+
+/* History: larger, easier-to-read speed profile. */
 .speed-panel{min-height:470px!important}
-.speed-chart{height:420px!important;min-height:420px!important}
+.speed-chart{height:420px!important;min-height:420px!important;overflow:visible!important}
+.speed-chart svg{min-height:400px!important}
 .chart-grid text,.chart-x text,.axis-unit{font-size:13px!important}
-.speed-segment{stroke-width:5!important}
-.speed-chart circle{stroke-width:1.5!important}
+.speed-segment{stroke-width:4!important;stroke-linecap:round!important}
+
+/* Admin mobile: page itself scrolls; client map keeps its locked viewport behavior. */
 @media(max-width:900px){
- html:has(body.admin-page){height:auto!important;min-height:100%!important;overflow-x:hidden!important;overflow-y:auto!important;overscroll-behavior-y:auto!important;touch-action:pan-y!important}
- body.admin-page{height:auto!important;min-height:100dvh!important;overflow-x:hidden!important;overflow-y:visible!important;position:static!important;touch-action:pan-y!important;overscroll-behavior-y:auto!important;-webkit-overflow-scrolling:touch!important}
- body.admin-page .admin-shell{display:block!important;height:auto!important;min-height:calc(100dvh - 58px)!important;overflow:visible!important;position:static!important}
- body.admin-page .admin-nav{position:static!important;height:auto!important;max-width:100%!important;overflow-x:auto!important;overflow-y:hidden!important;-webkit-overflow-scrolling:touch!important;touch-action:pan-x pan-y!important}
- body.admin-page .admin-main{height:auto!important;min-height:0!important;overflow:visible!important;position:static!important;padding-bottom:56px!important;touch-action:pan-y!important}
- body.admin-page .section{height:auto!important;overflow:visible!important;touch-action:pan-y!important}
- body.admin-page .table-wrap{overflow-x:auto!important;overflow-y:visible!important;-webkit-overflow-scrolling:touch!important;touch-action:pan-x pan-y!important}
- .history-grid{grid-template-columns:1fr!important}.speed-panel{min-height:400px!important}.speed-chart{height:360px!important;min-height:360px!important}
+  body:not(.admin-page){overflow:hidden}
+  body.admin-page{height:auto!important;min-height:100%!important;overflow-x:hidden!important;overflow-y:auto!important;overscroll-behavior-y:auto!important;-webkit-overflow-scrolling:touch!important;touch-action:pan-y!important}
+  body.admin-page .topbar{position:relative!important;top:auto!important}
+  body.admin-page .admin-shell{display:block!important;height:auto!important;min-height:calc(100dvh - 58px)!important;overflow:visible!important}
+  body.admin-page .admin-nav{position:relative!important;inset:auto!important;width:auto!important;height:auto!important;max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;display:flex!important;gap:8px!important;white-space:nowrap!important;padding:10px!important}
+  body.admin-page .admin-nav .admin-title{display:none!important}
+  body.admin-page .admin-nav a{flex:0 0 auto!important}
+  body.admin-page .admin-main{display:block!important;height:auto!important;max-height:none!important;min-height:0!important;overflow:visible!important;padding:12px!important;touch-action:pan-y!important}
+  body.admin-page .admin-main>section,body.admin-page .section{height:auto!important;max-height:none!important;overflow:visible!important}
+  body.admin-page .table-wrap{overflow-x:auto!important;overflow-y:visible!important;-webkit-overflow-scrolling:touch!important}
+  body.admin-page .modal.show{position:fixed!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important}
+  body.admin-page .modal-card{max-height:85dvh!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important}
+  .speed-panel{min-height:390px!important}.speed-chart{height:340px!important;min-height:340px!important}.speed-chart svg{min-height:320px!important}
 }
