@@ -2,7 +2,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}3bdoalsory{% endblock %}</title>
 <link rel="stylesheet" href="{{url_for('static',filename='style.css')}}">
-{% block head %}{% endblock %}</head><body>
+{% block head %}{% endblock %}</head><body class="{{ 'admin-page' if session.get('role') == 'admin' else '' }}">
 <div class="ambient a1"></div><div class="ambient a2"></div>
 {% if session.get("user_id") %}
 <header class="topbar"><a class="brand" href="{{'/admin' if session.role=='admin' else '/dashboard'}}"><i>◆</i>3bdo<span>alsory</span></a>

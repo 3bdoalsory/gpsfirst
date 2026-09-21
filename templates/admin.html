@@ -15,7 +15,6 @@
 </main></div>{% endblock %}
 {% block scripts %}<script>
 (function(){
- document.documentElement.classList.add('admin-page');document.body.classList.add('admin-page');
  const f=document.getElementById('newDevice'); if(f){const pad=n=>String(n).padStart(2,'0'),fmt=d=>`${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;const today=new Date(),next=new Date(today);next.setFullYear(today.getFullYear()+1);const a=f.querySelector('[name="subscription_start"]'),b=f.querySelector('[name="subscription_end"]');if(a&&!a.value)a.value=fmt(today);if(b&&!b.value)b.value=fmt(next);}
  const q=document.getElementById('adminDeviceSearch'),cf=document.getElementById('adminClientFilter'),rows=[...document.querySelectorAll('.admin-device-row')],toggle=document.getElementById('toggleDevices'); let expanded=false;
  function filter(){const term=(q?.value||'').trim().toLowerCase(),client=cf?.value||'';let shown=0,total=0;rows.forEach(r=>{const match=(!term||(r.dataset.search||'').toLowerCase().includes(term))&&(!client||r.dataset.client===client);if(match)total++;const visible=match&&(expanded||shown<6);r.style.display=visible?'':'none';if(match&&visible)shown++;});if(toggle){toggle.hidden=total<=6;toggle.textContent=expanded?'تصغير القائمة':'إظهار المزيد';}}
