@@ -69,6 +69,10 @@ def gsm_status(value):
 def h02_command(device_id, cut=True):
     return f"*HQ,{device_id},S20,{datetime.utcnow().strftime('%H%M%S')},1,{1 if cut else 0}#"
 
+def h02_status_command(device_id):
+    """Non-destructive H02 state query used before relay tests."""
+    return f"*HQ,{device_id},S26,{datetime.utcnow().strftime('%H%M%S')},0#"
+
 def queue_device_command(c, d, request_id, command_type, cut):
     cmd=h02_command(d['device_id'],cut)
     c.execute("INSERT INTO device_commands(device_pk,request_id,command_type,command_text,status) VALUES(?,?,?,?,?)",
@@ -273,10 +277,10 @@ def dashboard():
       ORDER BY d.platform_id
     """,(session["user_id"],)).fetchall()
     sync_subscription_notifications(c, session["user_id"]); c.commit()
-    notes=c.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 50",
+    notes=c.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC",
                     (session["user_id"],)).fetchall()
     unread_count=sum(1 for n in notes if not n["is_read"])
-    geo_notes=[n for n in notes if str(n["kind"]).startswith("geofence:")]
+    geo_notes=list(notes)
     audits=c.execute("""SELECT a.*,d.platform_id,d.name device_name
                         FROM service_audit a JOIN devices d ON d.id=a.device_pk
                         WHERE a.user_id=? ORDER BY a.id DESC LIMIT 20""",
@@ -699,6 +703,20 @@ def service_request(pid):
     return jsonify(ok=True,status=status,message=msg)
 
 
+@app.post("/service/<int:pid>/test")
+@login_required()
+def service_device_test(pid):
+    c=db(); d=c.execute("SELECT * FROM devices WHERE platform_id=?",(pid,)).fetchone()
+    if not can_access_device(d):
+        c.close(); return jsonify(error="forbidden",message="لا تملك صلاحية الوصول إلى هذه المركبة"),403
+    # S26 reads device state only; it does not switch the relay.
+    c.execute("INSERT INTO device_commands(device_pk,request_id,command_type,command_text,status) VALUES(?,?,?,?,?)",
+              (d["id"],None,"diagnostic",h02_status_command(d["device_id"]),"queued"))
+    c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
+              (session["user_id"],session["username"],d["id"],"device_connection_test","queued"))
+    c.commit(); c.close()
+    return jsonify(ok=True,status="queued",message="تم تجهيز اختبار S26 الآمن؛ لا يغيّر حالة الريليه")
+
 @app.post("/service/<int:pid>/restore")
 @login_required()
 def service_restore(pid):
@@ -714,6 +732,25 @@ def service_restore(pid):
     c.commit(); c.close()
     return jsonify(ok=True,status="queued",message="تم تجهيز أمر إعادة التشغيل وسيُرسل للجهاز عبر TCP")
 
+def expire_stale_device_commands(c, device_pk=None, timeout_seconds=45):
+    params=[]
+    where="status='sent' AND sent_at IS NOT NULL AND datetime(sent_at) <= datetime('now', ?)"
+    params.append(f'-{int(timeout_seconds)} seconds')
+    if device_pk is not None:
+        where += " AND device_pk=?"
+        params.append(device_pk)
+    stale=c.execute(f"SELECT * FROM device_commands WHERE {where}",tuple(params)).fetchall()
+    for cmd in stale:
+        c.execute("UPDATE device_commands SET status='timed_out', response_text=COALESCE(response_text,'device confirmation timeout') WHERE id=?",(cmd['id'],))
+        if cmd['request_id']:
+            c.execute("UPDATE immobilize_requests SET status='timed_out',completed_at=CURRENT_TIMESTAMP,result='device confirmation timeout' WHERE id=? AND status NOT IN ('confirmed','cancelled')",(cmd['request_id'],))
+            req=c.execute("SELECT * FROM immobilize_requests WHERE id=?",(cmd['request_id'],)).fetchone()
+            if req:
+                action='vehicle_restore_request' if cmd['command_type']=='restore' else 'vehicle_stop_request'
+                c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
+                          (req['user_id'],req['username_snapshot'],req['device_pk'],action,'timed_out'))
+    return len(stale)
+
 def gateway_authorized():
     expected=os.getenv("GPS_GATEWAY_TOKEN",os.getenv("GPS_INGEST_TOKEN","")).strip()
     if not expected: return True
@@ -725,6 +762,8 @@ def gateway_authorized():
 def gateway_commands(device_id):
     if not gateway_authorized(): return jsonify(error="unauthorized"),401
     c=db(); d=c.execute("SELECT * FROM devices WHERE device_id=?",(device_id,)).fetchone()
+    if d:
+        expire_stale_device_commands(c,d["id"]); c.commit()
     if not d: c.close(); return jsonify(commands=[])
     rows=c.execute("SELECT * FROM device_commands WHERE device_pk=? AND status='queued' ORDER BY id LIMIT 5",(d["id"],)).fetchall()
     out=[dict(r) for r in rows]; c.close(); return jsonify(commands=out)
@@ -738,19 +777,24 @@ def gateway_command_sent(cid):
 @app.post("/api/gateway/command-response")
 def gateway_command_response():
     if not gateway_authorized(): return jsonify(error="unauthorized"),401
-    x=request.get_json(silent=True) or {}; did=str(x.get("device_id") or ""); raw=str(x.get("raw") or "")
+    x=request.get_json(silent=True) or {}; did=str(x.get("device_id") or ""); raw=str(x.get("raw") or ""); cid=x.get("command_id")
     c=db(); d=c.execute("SELECT * FROM devices WHERE device_id=?",(did,)).fetchone()
     if not d: c.close(); return jsonify(error="unknown_device"),404
-    cmd=c.execute("SELECT * FROM device_commands WHERE device_pk=? AND status='sent' ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
+    cmd=c.execute("SELECT * FROM device_commands WHERE id=? AND device_pk=? AND status='sent'",(cid,d["id"])).fetchone() if cid else None
+    if not cmd: cmd=c.execute("SELECT * FROM device_commands WHERE device_pk=? AND status='sent' ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
     if cmd:
-        c.execute("UPDATE device_commands SET status='confirmed',confirmed_at=CURRENT_TIMESTAMP,response_text=? WHERE id=?",(raw,cmd["id"]))
+        failed = "ERROR" in raw.upper() or "FAIL" in raw.upper()
+        final_status = "failed" if failed else "confirmed"
+        c.execute("UPDATE device_commands SET status=?,confirmed_at=CURRENT_TIMESTAMP,response_text=? WHERE id=?",(final_status,raw,cmd["id"]))
         if cmd["request_id"]:
-            c.execute("UPDATE immobilize_requests SET status='confirmed',completed_at=CURRENT_TIMESTAMP,result=? WHERE id=?",(raw,cmd["request_id"]))
+            c.execute("UPDATE immobilize_requests SET status=?,completed_at=CURRENT_TIMESTAMP,result=? WHERE id=?",(final_status,raw,cmd["request_id"]))
             req=c.execute("SELECT * FROM immobilize_requests WHERE id=?",(cmd["request_id"],)).fetchone()
             if req:
                 action="vehicle_restore_request" if cmd["command_type"]=="restore" else "vehicle_stop_request"
                 c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
-                          (req["user_id"],req["username_snapshot"],req["device_pk"],action,"confirmed_by_device"))
+                          (req["user_id"],req["username_snapshot"],req["device_pk"],action,"device_failed" if failed else "confirmed_by_device"))
+        elif cmd["command_type"]=="diagnostic":
+            c.execute("UPDATE service_audit SET result=? WHERE id=(SELECT id FROM service_audit WHERE device_pk=? AND action='device_connection_test' ORDER BY id DESC LIMIT 1)",("device_failed" if failed else "confirmed_by_device",d["id"]))
     c.commit(); c.close(); return jsonify(ok=True)
 
 @app.post("/api/immobilize/<int:pid>/cancel")
@@ -770,8 +814,11 @@ def immobilize_cancel(pid):
 def immobilize_status(pid):
     c=db();d=c.execute("SELECT * FROM devices WHERE platform_id=?",(pid,)).fetchone()
     if not can_access_device(d): c.close(); return jsonify(error="forbidden"),403
-    r=c.execute("SELECT status,requested_at,ready_at,completed_at,result FROM immobilize_requests WHERE device_pk=? ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone(); c.close()
-    return jsonify(request=dict(r) if r else None)
+    expire_stale_device_commands(c,d["id"]); c.commit()
+    r=c.execute("SELECT id,status,requested_at,ready_at,completed_at,result FROM immobilize_requests WHERE device_pk=? ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
+    cmd=c.execute("SELECT id,command_type,status,created_at,sent_at,confirmed_at,response_text FROM device_commands WHERE device_pk=? ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
+    out={"request":dict(r) if r else None,"command":dict(cmd) if cmd else None}; c.close()
+    return jsonify(**out)
 
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

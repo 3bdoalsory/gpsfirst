@@ -44,14 +44,17 @@ def post_tracker(packet):
             print("Web",r.status,r.read().decode(errors="replace"))
     except Exception as e: print("Tracker forward:",e)
 
-def is_s20_response(packet):
+def response_code(packet):
     u=packet.upper()
-    return ",S20," in u or ",V4,S20" in u
+    for code in ("S20","S26"):
+        if f",V4,{code}," in u or f",{code}," in u:
+            return code
+    return None
 
 class TrackerHandler(socketserver.BaseRequestHandler):
     def handle(self):
         ip,port=self.client_address;print(f"TCP connected: {ip}:{port}")
-        self.device_id=None;self.alive=True;self.send_lock=threading.Lock()
+        self.device_id=None;self.alive=True;self.send_lock=threading.Lock();self.pending_commands={}
         poller=threading.Thread(target=self.command_loop,daemon=True);poller.start()
         buf=b""
         try:
@@ -65,8 +68,10 @@ class TrackerHandler(socketserver.BaseRequestHandler):
                     print("RAW TCP:",packet)
                     m=DEVICE_ID_RE.match(packet)
                     if m:self.device_id=m.group(1).strip()
-                    if is_s20_response(packet) and self.device_id:
-                        try:api("/api/gateway/command-response","POST",{"device_id":self.device_id,"raw":packet})
+                    code=response_code(packet)
+                    if code and self.device_id:
+                        cid=self.pending_commands.pop(code,None)
+                        try:api("/api/gateway/command-response","POST",{"device_id":self.device_id,"command_id":cid,"raw":packet})
                         except Exception as e:print("Command response:",e)
                     else:post_tracker(packet)
         except Exception as e:print("TCP error:",e)
@@ -84,6 +89,8 @@ class TrackerHandler(socketserver.BaseRequestHandler):
                         raw=cmd["command_text"].encode()
                         with self.send_lock:self.request.sendall(raw)
                         print("TCP COMMAND:",cmd["command_text"])
+                        ctype=cmd.get("command_type")
+                        self.pending_commands["S26" if ctype=="diagnostic" else "S20"]=cid
                         api(f"/api/gateway/commands/{cid}/sent","POST",{})
                         sent.add(cid)
             except Exception as e:
