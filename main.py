@@ -8,6 +8,8 @@ from database import init as init_database
 
 app = Flask(__name__)
 app.secret_key = os.getenv("GPS_SECRET_KEY", "dev-change-me")
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+MAP_PROVIDER = os.getenv("MAP_PROVIDER", "leaflet").strip().lower()
 DB = Path(os.getenv("GPS_DB_PATH", str(Path(__file__).with_name("gpsplatform.db"))))
 init_database()
 _LAST_GPS_CLEANUP = 0.0
@@ -46,6 +48,32 @@ def point_in_polygon(lat,lon,poly):
         if hit: inside=not inside
         j=i
     return inside
+
+def parse_device_metrics(raw):
+    """SinoTrack V8: third field from end = GSM 0..31; last field = battery %."""
+    try:
+        parts=str(raw or '').strip().rstrip('#').split(',')
+        if len(parts) < 4: return None, None
+        gsm=int(float(parts[-3])); battery=int(float(parts[-1]))
+        return max(0,min(31,gsm)), max(0,min(100,battery))
+    except Exception:
+        return None, None
+
+def gsm_status(value):
+    try:
+        v=int(value)
+        return 'strong' if v>15 else ('medium' if v>=7 else 'weak')
+    except Exception:
+        return 'weak'
+
+def h02_command(device_id, cut=True):
+    return f"*HQ,{device_id},S20,{datetime.utcnow().strftime('%H%M%S')},1,{1 if cut else 0}#"
+
+def queue_device_command(c, d, request_id, command_type, cut):
+    cmd=h02_command(d['device_id'],cut)
+    c.execute("INSERT INTO device_commands(device_pk,request_id,command_type,command_text,status) VALUES(?,?,?,?,?)",
+              (d['id'],request_id,command_type,cmd,'queued'))
+    return cmd
 
 def signal_status(last_update, speed=0, timeout_seconds=120):
     if not last_update: return "offline"
@@ -90,9 +118,10 @@ def refresh_pending_immobilize(c,d):
     r=c.execute("SELECT * FROM immobilize_requests WHERE device_pk=? AND status='pending_stop' ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
     if not r: return
     if confirmed_stopped(c,d["device_id"]):
-        c.execute("UPDATE immobilize_requests SET status='ready_for_provider',ready_at=CURRENT_TIMESTAMP WHERE id=?",(r["id"],))
+        c.execute("UPDATE immobilize_requests SET status='queued',ready_at=CURRENT_TIMESTAMP WHERE id=?",(r["id"],))
+        queue_device_command(c,d,r["id"],"immobilize",True)
         c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
-                  (r["user_id"],r["username_snapshot"],d["id"],"vehicle_stop_request","ready_for_provider"))
+                  (r["user_id"],r["username_snapshot"],d["id"],"vehicle_stop_request","queued_for_device"))
 
 def cleanup_old_gps(c):
     global _LAST_GPS_CLEANUP
@@ -236,7 +265,9 @@ def dashboard():
        (SELECT longitude FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) longitude,
        (SELECT speed FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) speed,
        (SELECT heading FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) heading,
-       (SELECT created_at FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) last_update
+       (SELECT created_at FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) last_update,
+       (SELECT gsm_signal FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) gsm_signal,
+       (SELECT battery_percent FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) battery_percent
       FROM devices d
       WHERE d.user_id=? AND d.service_status!='final'
       ORDER BY d.platform_id
@@ -245,18 +276,18 @@ def dashboard():
     notes=c.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 50",
                     (session["user_id"],)).fetchall()
     unread_count=sum(1 for n in notes if not n["is_read"])
-    geo_notes=[n for n in notes if str(n["kind"]).startswith("geofence:")][:4]
+    geo_notes=[n for n in notes if str(n["kind"]).startswith("geofence:")]
     audits=c.execute("""SELECT a.*,d.platform_id,d.name device_name
                         FROM service_audit a JOIN devices d ON d.id=a.device_pk
                         WHERE a.user_id=? ORDER BY a.id DESC LIMIT 20""",
                      (session["user_id"],)).fetchall()
-    fences=c.execute("""SELECT g.id,g.name,g.polygon_json,g.alert_type,g.is_active
+    fences=c.execute("""SELECT g.id,g.name,g.polygon_json,g.alert_type,g.is_active,g.color
                         FROM geofences g
                         WHERE g.user_id=? AND g.is_active=1 ORDER BY g.id""",(session["user_id"],)).fetchall()
     c.close()
     devices=[]
     for x in rows:
-        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False; z["signal_status"]=signal_status(x["last_update"],x["speed"])
+        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False; z["gsm_status"]=gsm_status(x["gsm_signal"])
         if x["subscription_end"]:
             try: z["subscription_soon"]=(date.fromisoformat(x["subscription_end"])-date.today()).days <= 30
             except ValueError: pass
@@ -295,6 +326,11 @@ def tracker_ingest():
         heading=float(payload.get("heading",payload.get("course",0)) or 0)
         acc=parse_acc(payload.get("acc"))
         raw_data=payload.get("raw_data",payload.get("raw",json.dumps(payload,ensure_ascii=False)))
+        gsm=payload.get("gsm_signal"); battery=payload.get("battery_percent")
+        if gsm is None or battery is None:
+            rg,rb=parse_device_metrics(raw_data)
+            gsm=rg if gsm is None else gsm; battery=rb if battery is None else battery
+        gsm=int(gsm) if gsm is not None else None; battery=int(battery) if battery is not None else None
         if not did or not (-90<=lat<=90) or not (-180<=lon<=180): raise ValueError
     except Exception:
         return jsonify(ok=False,error="invalid_payload"),400
@@ -304,8 +340,8 @@ def tracker_ingest():
     st=device_state(d)
     if st in ("expired","temporary","final") or not d["user_id"]:
         c.close(); return jsonify(ok=False,error="device_unavailable",state=st),409
-    c.execute("INSERT INTO gps_data(device_id,latitude,longitude,speed,heading,acc,raw_data) VALUES(?,?,?,?,?,?,?)",
-              (did,lat,lon,round(speed,2),heading,acc,str(raw_data)))
+    c.execute("INSERT INTO gps_data(device_id,latitude,longitude,speed,heading,acc,gsm_signal,battery_percent,raw_data) VALUES(?,?,?,?,?,?,?,?,?)",
+              (did,lat,lon,round(speed,2),heading,acc,gsm,battery,str(raw_data)))
     refresh_pending_immobilize(c,d)
     process_geofences(c,d,lat,lon)
     cleanup_old_gps(c)
@@ -319,11 +355,11 @@ def latest(pid):
     if not can_access_device(d): c.close(); return jsonify(error="forbidden"),403
     st=device_state(d)
     if st in ("expired","temporary","final"): c.close(); return jsonify(available=False,state=st)
-    p=c.execute("""SELECT latitude,longitude,speed,heading,acc,created_at FROM gps_data
+    p=c.execute("""SELECT latitude,longitude,speed,heading,acc,gsm_signal,battery_percent,created_at FROM gps_data
                    WHERE device_id=? ORDER BY id DESC LIMIT 1""",(d["device_id"],)).fetchone()
     c.close()
     payload=dict(p) if p else {}
-    return jsonify(available=bool(p),state=st,signal_status=signal_status(payload.get("created_at"),payload.get("speed",0)),**payload)
+    return jsonify(available=bool(p),state=st,gsm_status=gsm_status(payload.get("gsm_signal")),**payload)
 
 @app.get("/history/<int:pid>")
 @login_required()
@@ -386,9 +422,8 @@ def geofences():
         allowed={r["id"] for r in c.execute("SELECT id FROM devices WHERE user_id=? AND service_status!='final'",(session["user_id"],)).fetchall()}
         selected=[x for x in selected if x in allowed]
         if len(poly)>=3 and selected:
-            cur=c.execute("""INSERT INTO geofences(user_id,device_pk,name,polygon_json,alert_type,sms_enabled)
-                             VALUES(?,?,?,?,?,?)""",
-                          (session["user_id"],selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],1 if request.form.get("sms_enabled") else 0))
+            cur=c.execute("""INSERT INTO geofences(user_id,device_pk,name,polygon_json,alert_type,sms_enabled,color)\n                             VALUES(?,?,?,?,?,?,?)""",
+                          (session["user_id"],selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],1 if request.form.get("sms_enabled") else 0,request.form.get("color") or "#29c7e8"))
             fid=cur.lastrowid
             c.executemany("INSERT INTO geofence_devices(geofence_id,device_pk) VALUES(?,?)",[(fid,x) for x in selected])
             c.commit(); flash("تم حفظ الزون بنجاح","ok")
@@ -417,8 +452,8 @@ def geofence_edit(fid):
     allowed={r["id"] for r in c.execute("SELECT id FROM devices WHERE user_id=? AND service_status!='final'",(session["user_id"],)).fetchall()}
     selected=[x for x in selected if x in allowed]
     if len(poly)>=3 and selected:
-        c.execute("UPDATE geofences SET device_pk=?,name=?,polygon_json=?,alert_type=?,sms_enabled=?,is_active=? WHERE id=?",
-                  (selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],1 if request.form.get("sms_enabled") else 0,1 if request.form.get("is_active") else 0,fid))
+        c.execute("UPDATE geofences SET device_pk=?,name=?,polygon_json=?,alert_type=?,sms_enabled=?,color=?,is_active=? WHERE id=?",
+                  (selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],1 if request.form.get("sms_enabled") else 0,request.form.get("color") or "#29c7e8",1 if request.form.get("is_active") else 0,fid))
         c.execute("DELETE FROM geofence_devices WHERE geofence_id=?",(fid,))
         c.executemany("INSERT INTO geofence_devices(geofence_id,device_pk) VALUES(?,?)",[(fid,x) for x in selected])
         c.commit(); flash("تم تعديل الزون","ok")
@@ -650,15 +685,73 @@ def service_request(pid):
     existing=c.execute("SELECT id,status FROM immobilize_requests WHERE device_pk=? AND status IN ('pending_stop','ready_for_provider') ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
     if existing:
         c.close();return jsonify(ok=True,status=existing["status"],message="يوجد طلب إيقاف قائم لهذه المركبة بالفعل")
-    status="ready_for_provider" if confirmed_stopped(c,d["device_id"]) else "pending_stop"
-    ready="CURRENT_TIMESTAMP" if status=="ready_for_provider" else "NULL"
+    status="queued" if confirmed_stopped(c,d["device_id"]) else "pending_stop"
+    ready="CURRENT_TIMESTAMP" if status=="queued" else "NULL"
     c.execute(f"""INSERT INTO immobilize_requests(user_id,username_snapshot,device_pk,status,ready_at) VALUES(?,?,?,?,{ready})""",
               (session["user_id"],session["username"],d["id"],status))
+    if status=="queued":
+        reqid=c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+        queue_device_command(c,d,reqid,"immobilize",True)
     c.execute("""INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)""",
               (session["user_id"],session["username"],d["id"],"vehicle_stop_request",status))
     c.commit();c.close()
-    msg="المركبة متوقفة وتم تجهيز الطلب لطبقة التحكم" if status=="ready_for_provider" else "تم حفظ الطلب وسيبقى بانتظار توقف المركبة"
+    msg="تم تجهيز أمر الإيقاف الحقيقي وسيُرسل للجهاز عبر TCP" if status=="queued" else "تم حفظ الطلب وسيبقى بانتظار توقف المركبة الآمن"
     return jsonify(ok=True,status=status,message=msg)
+
+
+@app.post("/service/<int:pid>/restore")
+@login_required()
+def service_restore(pid):
+    c=db(); d=c.execute("SELECT * FROM devices WHERE platform_id=?",(pid,)).fetchone()
+    if not can_access_device(d) or not immobilize_allowed_for_current_user(c):
+        c.close(); return jsonify(error="forbidden",message="لا تملك صلاحية هذه العملية"),403
+    c.execute("INSERT INTO immobilize_requests(user_id,username_snapshot,device_pk,status,ready_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
+              (session["user_id"],session["username"],d["id"],"queued"))
+    reqid=c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    queue_device_command(c,d,reqid,"restore",False)
+    c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
+              (session["user_id"],session["username"],d["id"],"vehicle_restore_request","queued"))
+    c.commit(); c.close()
+    return jsonify(ok=True,status="queued",message="تم تجهيز أمر إعادة التشغيل وسيُرسل للجهاز عبر TCP")
+
+def gateway_authorized():
+    expected=os.getenv("GPS_GATEWAY_TOKEN",os.getenv("GPS_INGEST_TOKEN","")).strip()
+    if not expected: return True
+    auth=request.headers.get("Authorization","")
+    supplied=auth[7:].strip() if auth.lower().startswith("bearer ") else request.headers.get("X-GPS-Token","").strip()
+    return supplied==expected
+
+@app.get("/api/gateway/commands/<device_id>")
+def gateway_commands(device_id):
+    if not gateway_authorized(): return jsonify(error="unauthorized"),401
+    c=db(); d=c.execute("SELECT * FROM devices WHERE device_id=?",(device_id,)).fetchone()
+    if not d: c.close(); return jsonify(commands=[])
+    rows=c.execute("SELECT * FROM device_commands WHERE device_pk=? AND status='queued' ORDER BY id LIMIT 5",(d["id"],)).fetchall()
+    out=[dict(r) for r in rows]; c.close(); return jsonify(commands=out)
+
+@app.post("/api/gateway/commands/<int:cid>/sent")
+def gateway_command_sent(cid):
+    if not gateway_authorized(): return jsonify(error="unauthorized"),401
+    c=db(); c.execute("UPDATE device_commands SET status='sent',sent_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'",(cid,)); c.commit(); c.close()
+    return jsonify(ok=True)
+
+@app.post("/api/gateway/command-response")
+def gateway_command_response():
+    if not gateway_authorized(): return jsonify(error="unauthorized"),401
+    x=request.get_json(silent=True) or {}; did=str(x.get("device_id") or ""); raw=str(x.get("raw") or "")
+    c=db(); d=c.execute("SELECT * FROM devices WHERE device_id=?",(did,)).fetchone()
+    if not d: c.close(); return jsonify(error="unknown_device"),404
+    cmd=c.execute("SELECT * FROM device_commands WHERE device_pk=? AND status='sent' ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
+    if cmd:
+        c.execute("UPDATE device_commands SET status='confirmed',confirmed_at=CURRENT_TIMESTAMP,response_text=? WHERE id=?",(raw,cmd["id"]))
+        if cmd["request_id"]:
+            c.execute("UPDATE immobilize_requests SET status='confirmed',completed_at=CURRENT_TIMESTAMP,result=? WHERE id=?",(raw,cmd["request_id"]))
+            req=c.execute("SELECT * FROM immobilize_requests WHERE id=?",(cmd["request_id"],)).fetchone()
+            if req:
+                action="vehicle_restore_request" if cmd["command_type"]=="restore" else "vehicle_stop_request"
+                c.execute("INSERT INTO service_audit(user_id,username_snapshot,device_pk,action,result) VALUES(?,?,?,?,?)",
+                          (req["user_id"],req["username_snapshot"],req["device_pk"],action,"confirmed_by_device"))
+    c.commit(); c.close(); return jsonify(ok=True)
 
 @app.post("/api/immobilize/<int:pid>/cancel")
 @login_required()

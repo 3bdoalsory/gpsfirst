@@ -52,6 +52,8 @@ def init():
       speed REAL DEFAULT 0,
       heading REAL DEFAULT 0,
       acc INTEGER,
+      gsm_signal INTEGER,
+      battery_percent INTEGER,
       raw_data TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -83,6 +85,23 @@ def init():
       FOREIGN KEY(device_pk) REFERENCES devices(id)
     );
     CREATE INDEX IF NOT EXISTS idx_immobilize_device_status ON immobilize_requests(device_pk,status);
+
+
+    CREATE TABLE IF NOT EXISTS device_commands(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_pk INTEGER NOT NULL,
+      request_id INTEGER,
+      command_type TEXT NOT NULL,
+      command_text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      sent_at TIMESTAMP,
+      confirmed_at TIMESTAMP,
+      response_text TEXT,
+      FOREIGN KEY(device_pk) REFERENCES devices(id),
+      FOREIGN KEY(request_id) REFERENCES immobilize_requests(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_device_commands_status ON device_commands(device_pk,status);
 
     CREATE TABLE IF NOT EXISTS service_audit(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,6 +135,10 @@ def init():
     gpscols = {r[1] for r in c.execute("PRAGMA table_info(gps_data)")}
     if "acc" not in gpscols:
         c.execute("ALTER TABLE gps_data ADD COLUMN acc INTEGER")
+    if "gsm_signal" not in gpscols:
+        c.execute("ALTER TABLE gps_data ADD COLUMN gsm_signal INTEGER")
+    if "battery_percent" not in gpscols:
+        c.execute("ALTER TABLE gps_data ADD COLUMN battery_percent INTEGER")
 
     # V3 used circular geofences. Preserve it as backup and create polygon schema.
     gcols = {r[1] for r in c.execute("PRAGMA table_info(geofences)")}
@@ -130,12 +153,16 @@ def init():
       polygon_json TEXT NOT NULL,
       alert_type TEXT NOT NULL DEFAULT 'both',
       sms_enabled INTEGER NOT NULL DEFAULT 0,
+      color TEXT NOT NULL DEFAULT '#29c7e8',
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(device_pk) REFERENCES devices(id)
     )
     """)
+    gcols2 = {r[1] for r in c.execute("PRAGMA table_info(geofences)")}
+    if "color" not in gcols2:
+        c.execute("ALTER TABLE geofences ADD COLUMN color TEXT NOT NULL DEFAULT '#29c7e8'")
     c.execute("""
     CREATE TABLE IF NOT EXISTS geofence_devices(
       geofence_id INTEGER NOT NULL,
