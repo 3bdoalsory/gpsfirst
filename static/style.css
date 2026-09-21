@@ -586,3 +586,22 @@ body>.notification-modal .notification-head{font-size:20px!important;position:st
 /* ===== V9 refinements ===== */
 .vehicle-metrics{display:flex;align-items:center;gap:12px;margin-inline-start:auto}.gsm-bars{height:28px;display:flex;align-items:flex-end;gap:3px;padding:3px 5px}.gsm-bars i{display:block;width:5px;border-radius:3px 3px 1px 1px;background:#53606d;opacity:.5}.gsm-bars i:nth-child(1){height:7px}.gsm-bars i:nth-child(2){height:12px}.gsm-bars i:nth-child(3){height:18px}.gsm-bars i:nth-child(4){height:24px}.gsm-bars.strong i.on{background:#36df92;opacity:1}.gsm-bars.medium i.on{background:#f1c84c;opacity:1}.gsm-bars.weak i.on{background:#737f8d;opacity:1}
 .zone-color-picker{display:inline-grid!important;place-items:center;width:48px;height:48px;position:relative;cursor:pointer}.zone-color-picker .zone-color{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none}.zone-color-dot{display:block;width:34px;height:34px;border-radius:50%;background:var(--zone-color);border:3px solid rgba(255,255,255,.85);box-shadow:0 0 0 2px rgba(41,199,232,.2),0 4px 16px rgba(0,0,0,.3);cursor:pointer}.zone-color-picker:focus-within .zone-color-dot{outline:2px solid #29c7e8;outline-offset:3px}
+\n\n/* ===== V9.3 usability refinements: geofence color, history chart, admin mobile scroll ===== */
+.zone-color-picker{width:52px!important;height:52px!important;position:relative!important;display:inline-grid!important;place-items:center!important;border-radius:50%!important}
+.zone-color-picker .zone-color{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;opacity:0!important;cursor:pointer!important;pointer-events:auto!important;z-index:2!important;padding:0!important;border:0!important}
+.zone-color-dot{width:38px!important;height:38px!important;border-radius:50%!important;background:var(--zone-color)!important;border:3px solid rgba(255,255,255,.9)!important;box-shadow:0 0 0 2px rgba(41,199,232,.24),0 5px 18px rgba(0,0,0,.34)!important;pointer-events:none!important;z-index:1!important}
+.history-grid{grid-template-columns:minmax(0,1.3fr) minmax(420px,1fr)!important}
+.speed-panel{min-height:470px!important}
+.speed-chart{height:420px!important;min-height:420px!important}
+.chart-grid text,.chart-x text,.axis-unit{font-size:13px!important}
+.speed-segment{stroke-width:5!important}
+.speed-chart circle{stroke-width:1.5!important}
+@media(max-width:900px){
+ html.admin-page,body.admin-page{height:auto!important;min-height:100dvh!important;overflow-x:hidden!important;overflow-y:auto!important;position:static!important;touch-action:pan-y!important;overscroll-behavior-y:auto!important;-webkit-overflow-scrolling:touch!important}
+ body.admin-page .admin-shell{display:block!important;height:auto!important;min-height:calc(100dvh - 58px)!important;overflow:visible!important;position:static!important}
+ body.admin-page .admin-nav{position:static!important;height:auto!important;max-width:100%!important;overflow-x:auto!important;overflow-y:hidden!important;-webkit-overflow-scrolling:touch!important}
+ body.admin-page .admin-main{height:auto!important;min-height:0!important;overflow:visible!important;position:static!important;padding-bottom:40px!important}
+ body.admin-page .section{overflow:visible!important}
+ body.admin-page .table-wrap{overflow-x:auto!important;overflow-y:visible!important;-webkit-overflow-scrolling:touch!important}
+ .history-grid{grid-template-columns:1fr!important}.speed-panel{min-height:400px!important}.speed-chart{height:360px!important;min-height:360px!important}
+}

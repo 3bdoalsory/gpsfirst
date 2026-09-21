@@ -46,7 +46,7 @@ def post_tracker(packet):
 
 def response_code(packet):
     u=packet.upper()
-    for code in ("S20","S26"):
+    for code in ("S20",):
         if f",V4,{code}," in u or f",{code}," in u:
             return code
     return None
@@ -78,21 +78,19 @@ class TrackerHandler(socketserver.BaseRequestHandler):
         finally:self.alive=False;print(f"TCP disconnected: {ip}:{port}")
 
     def command_loop(self):
-        sent=set()
         while self.alive:
             try:
                 if self.device_id:
                     x=api("/api/gateway/commands/"+self.device_id)
                     for cmd in x.get("commands",[]):
                         cid=cmd["id"]
-                        if cid in sent:continue
                         raw=cmd["command_text"].encode()
                         with self.send_lock:self.request.sendall(raw)
                         print("TCP COMMAND:",cmd["command_text"])
                         ctype=cmd.get("command_type")
-                        self.pending_commands["S26" if ctype=="diagnostic" else "S20"]=cid
+                        # Only one S20 command is fetched at a time, so its ACK can be matched safely.
+                        self.pending_commands["S20"]=cid
                         api(f"/api/gateway/commands/{cid}/sent","POST",{})
-                        sent.add(cid)
             except Exception as e:
                 if self.alive:print("Command poll:",e)
             time.sleep(2)
