@@ -745,7 +745,7 @@ def gateway_commands(device_id):
     if d:
         expire_stale_device_commands(c,d["id"]); c.commit()
     if not d: c.close(); return jsonify(commands=[])
-    rows=c.execute("SELECT * FROM device_commands WHERE device_pk=? AND status='queued' ORDER BY id LIMIT 5",(d["id"],)).fetchall()
+    rows=c.execute("SELECT * FROM device_commands WHERE device_pk=? AND status='queued' ORDER BY id LIMIT 1",(d["id"],)).fetchall()
     out=[dict(r) for r in rows]; c.close(); return jsonify(commands=out)
 
 @app.post("/api/gateway/commands/<int:cid>/sent")
