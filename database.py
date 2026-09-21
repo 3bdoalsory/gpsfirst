@@ -110,6 +110,7 @@ def init():
       device_pk INTEGER NOT NULL,
       action TEXT NOT NULL,
       result TEXT NOT NULL DEFAULT 'recorded',
+      request_id INTEGER,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -120,6 +121,9 @@ def init():
     """)
 
     # Upgrade existing databases without deleting users/devices/GPS history.
+    acols = {r[1] for r in c.execute("PRAGMA table_info(service_audit)")}
+    if "request_id" not in acols:
+        c.execute("ALTER TABLE service_audit ADD COLUMN request_id INTEGER")
     ucols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
     if "allow_immobilize" not in ucols:
         c.execute("ALTER TABLE users ADD COLUMN allow_immobilize INTEGER NOT NULL DEFAULT 0")
