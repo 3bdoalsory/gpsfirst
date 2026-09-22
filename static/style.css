@@ -617,3 +617,13 @@ body>.notification-modal .notification-head{font-size:20px!important;position:st
   body.admin-page .modal-card{max-height:85dvh!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important}
   .speed-panel{min-height:390px!important}.speed-chart{height:340px!important;min-height:340px!important}.speed-chart svg{min-height:320px!important}
 }
+
+/* ===== V9.5 cumulative notes ===== */
+.dot.gsm-offline{background:#596674!important;box-shadow:none!important;opacity:.45}
+.offline-pill{padding:5px 9px;border-radius:999px;background:#6f7d8b22;color:#9eabb7;border:1px solid #7f8c9933;font-size:11px;font-weight:800}
+.google-vehicle-label{transform:translateY(-24px);background:#071522dd;padding:2px 6px;border-radius:6px;text-shadow:0 1px 2px #000}
+.speed-chart{height:360px!important;display:block!important;padding:0!important}
+.speed-chart svg{display:block;width:100%!important;height:100%!important;min-height:360px}
+.chart-grid text,.chart-x text,.axis-unit{font-size:15px!important}.speed-segment{stroke-width:5!important}.speed-chart circle{stroke-width:1.5!important}
+#drawHint{display:block;color:#8fa9ba;line-height:1.6;margin:-4px 0 8px}
+@media(max-width:700px){.speed-chart{height:310px!important}.speed-chart svg{min-height:310px}.chart-grid text,.chart-x text,.axis-unit{font-size:14px!important}}

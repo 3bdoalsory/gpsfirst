@@ -14,6 +14,10 @@ DB = Path(os.getenv("GPS_DB_PATH", str(Path(__file__).with_name("gpsplatform.db"
 init_database()
 _LAST_GPS_CLEANUP = 0.0
 
+@app.context_processor
+def map_config():
+    return {'google_maps_api_key': GOOGLE_MAPS_API_KEY, 'map_provider': MAP_PROVIDER}
+
 @app.after_request
 def cache_static_assets(response):
     if request.path.startswith('/static/'):
@@ -286,7 +290,7 @@ def dashboard():
     c.close()
     devices=[]
     for x in rows:
-        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False; z["gsm_status"]=gsm_status(x["gsm_signal"])
+        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False; z["online_state"]=signal_status(x["last_update"],x["speed"]); z["is_offline"]=z["online_state"]=="offline"; z["gsm_status"]="offline" if z["is_offline"] else gsm_status(x["gsm_signal"]); z["gsm_signal"]=None if z["is_offline"] else z["gsm_signal"]; z["battery_percent"]=None if z["is_offline"] else z["battery_percent"]
         if x["subscription_end"]:
             try: z["subscription_soon"]=(date.fromisoformat(x["subscription_end"])-date.today()).days <= 30
             except ValueError: pass
@@ -358,7 +362,11 @@ def latest(pid):
                    WHERE device_id=? ORDER BY id DESC LIMIT 1""",(d["device_id"],)).fetchone()
     c.close()
     payload=dict(p) if p else {}
-    return jsonify(available=bool(p),state=st,gsm_status=gsm_status(payload.get("gsm_signal")),**payload)
+    online_state=signal_status(payload.get("created_at"),payload.get("speed")) if p else "offline"
+    if online_state=="offline":
+        payload["gsm_signal"]=None; payload["battery_percent"]=None
+        return jsonify(available=False,state="offline",online_state="offline",gsm_status="offline",**payload)
+    return jsonify(available=bool(p),state=st,online_state=online_state,gsm_status=gsm_status(payload.get("gsm_signal")),**payload)
 
 @app.get("/history/<int:pid>")
 @login_required()
@@ -559,9 +567,12 @@ def admin_password():
 @login_required(admin=True)
 def add_user():
     c=db()
+    username=request.form["username"].strip()
+    if c.execute("SELECT 1 FROM users WHERE lower(username)=lower(?)",(username,)).fetchone():
+        c.close(); flash("اسم المستخدم موجود مسبقًا","error"); return redirect("/admin#accounts")
     try:
         c.execute("INSERT INTO users(username,password_hash,role,phone,allow_immobilize) VALUES(?,?,'client',?,?)",
-                  (request.form["username"].strip(),generate_password_hash(request.form["password"]),
+                  (username,generate_password_hash(request.form["password"]),
                    request.form.get("phone","").strip(),1 if request.form.get("allow_immobilize") else 0))
         c.commit();flash("تم إنشاء الحساب","ok")
     except sqlite3.IntegrityError: flash("اسم المستخدم موجود مسبقًا","error")
@@ -571,8 +582,11 @@ def add_user():
 @login_required(admin=True)
 def edit_user(uid):
     c=db()
+    username=request.form["username"].strip()
+    if c.execute("SELECT 1 FROM users WHERE lower(username)=lower(?) AND id<>?",(username,uid)).fetchone():
+        c.close(); flash("اسم المستخدم موجود مسبقًا","error"); return redirect("/admin#accounts")
     c.execute("UPDATE users SET username=?,phone=? WHERE id=? AND role='client'",
-              (request.form["username"].strip(),request.form.get("phone","").strip(),uid))
+              (username,request.form.get("phone","").strip(),uid))
     c.execute("UPDATE users SET allow_immobilize=? WHERE id=? AND role=\'client\'",(1 if request.form.get("allow_immobilize") else 0,uid))
     if request.form.get("password","").strip():
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
@@ -589,11 +603,14 @@ def toggle_user(uid):
 @app.post("/admin/device")
 @login_required(admin=True)
 def add_device():
-    c=db();pid=c.execute("SELECT COALESCE(MAX(platform_id),10000)+1 n FROM devices").fetchone()["n"]
+    c=db(); device_id=request.form["device_id"].strip()
+    if c.execute("SELECT 1 FROM devices WHERE device_id=?",(device_id,)).fetchone():
+        c.close(); flash("Device ID موجود مسبقًا","error"); return redirect("/admin#devices")
+    pid=c.execute("SELECT COALESCE(MAX(platform_id),10000)+1 n FROM devices").fetchone()["n"]
     try:
         c.execute("""INSERT INTO devices(platform_id,device_id,name,plate,vehicle_model,vehicle_color,user_id,subscription_start,subscription_end)
                      VALUES(?,?,?,?,?,?,?,?,?)""",
-                  (pid,request.form["device_id"].strip(),request.form["name"].strip(),request.form.get("plate","").strip(),
+                  (pid,device_id,request.form["name"].strip(),request.form.get("plate","").strip(),
                    request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),
                    int(request.form["user_id"]) if request.form.get("user_id") else None,
                    parse_dmy(request.form.get("subscription_start")),parse_dmy(request.form.get("subscription_end"))))
