@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block head %}
-<script src="https://maps.googleapis.com/maps/api/js?key={{google_maps_api_key|e}}&v=weekly"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key={{google_maps_api_key|e}}&v=weekly&language={{current_lang}}"></script>
 <link href="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.css" rel="stylesheet"><script src="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.js"></script>
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.css" rel="stylesheet"><script src="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.js"></script>{% endblock %}
 {% block content %}{% if session.get("view_as_client") and session.get("admin_return_id") %}<div class="view-as-banner"><span>أنت تشاهد حساب العميل {{session.username}} كأدمن</span><form method="post" action="/admin/return"><button type="submit">العودة إلى لوحة الأدمن</button></form></div>{% endif %}<div class="client-shell"><button class="mobile-fleet-toggle" id="mobileFleetToggle">🚗 المركبات</button>
@@ -31,9 +31,19 @@ const providerStyles={google:[['roadmap','Map'],['satellite','Satellite'],['hybr
 let libreMap=null,libreKind=null,libreMarkers={},libreFenceIds=[];
 function openFreeStyle(id){return `https://tiles.openfreemap.org/styles/${id}`}
 function mapboxStyle(id){return `mapbox://styles/mapbox/${id}`}
+function localizeVectorLabels(){
+ if(!libreMap||!libreMap.isStyleLoaded())return;
+ const lang=window.APP_LANG==='en'?'en':'ar', style=libreMap.getStyle();
+ (style.layers||[]).filter(l=>l.type==='symbol'&&l.layout&&l.layout['text-field']).forEach(l=>{
+   try{const tf=JSON.stringify(l.layout['text-field']);if(!tf.includes('name'))return;
+     const localized=['coalesce',['get',`name:${lang}`],['get',`name_${lang}`],['get','name']];
+     libreMap.setLayoutProperty(l.id,'text-field',localized);
+   }catch(e){}
+ });
+}
 function osmStyle(){return {version:8,sources:{osm:{type:'raster',tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,attribution:'© OpenStreetMap contributors',maxzoom:19}},layers:[{id:'osm',type:'raster',source:'osm'}]}}
 function safeView(){try{const c=map&&map.getCenter&&map.getCenter();if(c&&Number.isFinite(c.lng())&&Number.isFinite(c.lat()))return {center:[c.lng(),c.lat()],zoom:map.getZoom()||12}}catch(e){}const d=devices.find(x=>x.longitude!=null&&x.latitude!=null);return {center:d?[+d.longitude,+d.latitude]:[36.67,33.97],zoom:12}}
-function ensureLibre(style,kind){if(libreMap&&libreKind!==kind){libreMap.remove();libreMap=null;libreMarkers={};libreFenceIds=[]}if(!libreMap){libreKind=kind;const C=kind==='mapbox'?mapboxgl:maplibregl;if(kind==='mapbox')mapboxgl.accessToken=MAPBOX_TOKEN;const v=safeView();const opts={container:'libreMap',style,center:v.center,zoom:v.zoom,attributionControl:true};if(kind==='mapbox')opts.accessToken=MAPBOX_TOKEN;libreMap=new C.Map(opts);libreMap.addControl(new C.NavigationControl(),'top-right');libreMap.on('load',()=>{renderLibreFences();syncLibreMarkers()});libreMap.on('error',e=>console.warn('Map provider error:',kind,e&&e.error?e.error:e))}else{libreMap.setStyle(style);libreMap.once('styledata',()=>{renderLibreFences();syncLibreMarkers()})}}
+function ensureLibre(style,kind){if(libreMap&&libreKind!==kind){libreMap.remove();libreMap=null;libreMarkers={};libreFenceIds=[]}if(!libreMap){libreKind=kind;const C=kind==='mapbox'?mapboxgl:maplibregl;if(kind==='mapbox')mapboxgl.accessToken=MAPBOX_TOKEN;const v=safeView();const opts={container:'libreMap',style,center:v.center,zoom:v.zoom,attributionControl:true};if(kind==='mapbox')opts.accessToken=MAPBOX_TOKEN;libreMap=new C.Map(opts);libreMap.addControl(new C.NavigationControl(),'top-right');libreMap.on('load',()=>{localizeVectorLabels();renderLibreFences();syncLibreMarkers()});libreMap.on('error',e=>console.warn('Map provider error:',kind,e&&e.error?e.error:e))}else{libreMap.setStyle(style);libreMap.once('styledata',()=>{localizeVectorLabels();renderLibreFences();syncLibreMarkers()})}}
 function renderLibreFences(){if(!libreMap||!libreMap.isStyleLoaded())return;libreFenceIds.forEach(id=>{if(libreMap.getLayer(id+'-fill'))libreMap.removeLayer(id+'-fill');if(libreMap.getLayer(id+'-line'))libreMap.removeLayer(id+'-line');if(libreMap.getSource(id))libreMap.removeSource(id)});libreFenceIds=[];fences.forEach((f,i)=>{if(!f.polygon||f.polygon.length<3)return;const id='fence-'+i,coords=f.polygon.map(p=>[+p[1],+p[0]]);coords.push(coords[0]);libreMap.addSource(id,{type:'geojson',data:{type:'Feature',geometry:{type:'Polygon',coordinates:[coords]}}});libreMap.addLayer({id:id+'-fill',type:'fill',source:id,paint:{'fill-color':f.color||'#29c7e8','fill-opacity':.12}});libreMap.addLayer({id:id+'-line',type:'line',source:id,paint:{'line-color':f.color||'#29c7e8','line-width':2}});libreFenceIds.push(id)})}
 function makeLibreMarker(d,x){const el=document.createElement('button');el.type='button';el.className='libre-vehicle-marker';el.title=d.name;el.innerHTML='<span>▲</span><b></b>';el.querySelector('b').textContent=d.name;el.onclick=()=>selectVehicle(d.platform_id);const C=libreKind==='mapbox'?mapboxgl:maplibregl;const mk=new C.Marker({element:el,rotation:Number(x.heading)||0}).setLngLat([+x.longitude,+x.latitude]).addTo(libreMap);return mk}
 function syncLibreMarkers(){if(!libreMap)return;devices.forEach(d=>{if(d.latitude!=null&&!d.is_offline&&!hiddenVehicles.has(d.platform_id))updateLibreMarker(d,d)})}

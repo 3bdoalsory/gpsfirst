@@ -653,3 +653,17 @@ body>.notification-modal .notification-head{font-size:20px!important;position:st
 #libreMap{position:absolute;inset:0;width:100%;height:100%;z-index:1}#libreMap[hidden],#map[hidden]{display:none!important}.map-switch{display:flex;gap:7px;align-items:center}.map-switch select{min-width:128px}.libre-vehicle-marker{border:0;background:transparent;color:#36df92;display:grid;place-items:center;cursor:pointer;filter:drop-shadow(0 2px 5px #001)}.libre-vehicle-marker span{font-size:28px;line-height:1}.libre-vehicle-marker b{font-size:11px;color:#eafaff;background:#071522dd;padding:2px 6px;border-radius:6px;white-space:nowrap}.gm-style .gm-style-iw-c,.gm-style .gm-style-iw-tc{display:none!important}@media(max-width:700px){.map-switch{max-width:calc(100vw - 24px);flex-wrap:wrap}.map-switch select{min-width:112px;flex:1}}
 /* V9.8 per-user language selector */
 .topbar .brand-side{display:flex;align-items:center;gap:10px}.language-select{background:#071b2bee;color:#dff8ff;border:1px solid #39d5f24d;border-radius:9px;padding:7px 9px;outline:none;font-weight:700}.language-select option{background:#071b2b;color:#dff8ff}html[dir="ltr"] body{direction:ltr}html[dir="ltr"] .topbar,html[dir="ltr"] .topbar nav,html[dir="ltr"] .brand-side{direction:ltr}html[dir="ltr"] .panel-menu a,html[dir="ltr"] .panel-menu button{text-align:left}html[dir="ltr"] .map-stage{direction:ltr}@media(max-width:700px){.language-select{max-width:92px;padding:6px}.topbar .brand-side{gap:6px}}
+
+/* V9.9 bilingual + mobile map controls */
+html[dir="ltr"] .fleet-panel{direction:ltr}
+html[dir="ltr"] .vehicle-row{text-align:left}
+html[dir="ltr"] .search span{right:auto;left:10px}
+html[dir="ltr"] .search input{padding-right:12px;padding-left:34px}
+html[dir="ltr"] .vehicle-info,html[dir="ltr"] .modal-card,html[dir="ltr"] .page{text-align:left}
+html[dir="ltr"] .map-switch{direction:ltr}
+@media(max-width:700px){
+ .map-switch{left:10px!important;right:10px!important;top:10px!important;display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px!important;max-width:none!important}
+ .map-switch select{width:100%!important;min-width:0!important;max-width:100%!important}
+ .fullscreen-map-btn{top:62px!important;left:10px!important;right:auto!important;z-index:510!important;white-space:nowrap}
+ html[dir="rtl"] .fullscreen-map-btn{left:10px!important;right:auto!important}
+}
