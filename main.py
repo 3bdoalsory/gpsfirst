@@ -586,11 +586,20 @@ def admin_view_client(uid):
     return redirect("/dashboard")
 
 @app.get("/admin/return")
-@login_required()
 def admin_return():
+    # Restore the original admin session after "view as client".
     aid=session.get("admin_return_id")
-    if not aid: return redirect("/dashboard")
-    name=session.get("admin_return_username","admin"); session.clear(); session["user_id"]=aid; session["username"]=name; session["role"]="admin"
+    name=session.get("admin_return_username")
+    if not aid or not session.get("view_as_client"):
+        return redirect("/")
+    c=db(); admin_user=c.execute("SELECT id,username FROM users WHERE id=? AND role='admin'",(aid,)).fetchone(); c.close()
+    if not admin_user:
+        session.clear(); return redirect("/")
+    session.clear()
+    session["user_id"]=admin_user["id"]
+    session["username"]=admin_user["username"] if admin_user["username"] else (name or "admin")
+    session["role"]="admin"
+    session.modified=True
     return redirect("/admin#accounts")
 
 @app.post("/api/notifications/read")
@@ -695,6 +704,41 @@ def toggle_user(uid):
     if u:c.execute("UPDATE users SET is_active=? WHERE id=?",(0 if u["is_active"] else 1,uid));c.commit()
     c.close();return redirect("/admin#accounts")
 
+
+@app.post("/admin/user/<int:uid>/delete")
+@login_required(admin=True)
+def delete_user_account(uid):
+    c=db()
+    u=c.execute("SELECT id,username FROM users WHERE id=? AND role='client'",(uid,)).fetchone()
+    if not u:
+        c.close(); flash("حساب العميل غير موجود","error"); return redirect("/admin#accounts")
+    devs=c.execute("SELECT id,device_id FROM devices WHERE user_id=?",(uid,)).fetchall()
+    device_pks=[d["id"] for d in devs]
+    device_ids=[d["device_id"] for d in devs]
+    # Remove historical/customer data, but keep every physical device registered and unassigned.
+    for pk,did in zip(device_pks,device_ids):
+        req_ids=[r["id"] for r in c.execute("SELECT id FROM immobilize_requests WHERE device_pk=?",(pk,)).fetchall()]
+        if req_ids:
+            marks=",".join("?"*len(req_ids)); c.execute(f"DELETE FROM device_commands WHERE request_id IN ({marks})",req_ids)
+        c.execute("DELETE FROM device_commands WHERE device_pk=?",(pk,))
+        c.execute("DELETE FROM immobilize_requests WHERE device_pk=?",(pk,))
+        c.execute("DELETE FROM service_audit WHERE device_pk=?",(pk,))
+        c.execute("DELETE FROM notifications WHERE device_pk=?",(pk,))
+        c.execute("DELETE FROM location_shares WHERE device_pk=?",(pk,))
+        c.execute("DELETE FROM geofence_devices WHERE device_pk=?",(pk,))
+        c.execute("DELETE FROM gps_data WHERE device_id=?",(did,))
+    # Zones belong to the client account, so remove them and their assignments.
+    fence_ids=[r["id"] for r in c.execute("SELECT id FROM geofences WHERE user_id=?",(uid,)).fetchall()]
+    for fid in fence_ids: c.execute("DELETE FROM geofence_devices WHERE geofence_id=?",(fid,))
+    c.execute("DELETE FROM geofences WHERE user_id=?",(uid,))
+    c.execute("DELETE FROM notifications WHERE user_id=?",(uid,))
+    c.execute("DELETE FROM location_shares WHERE user_id=?",(uid,))
+    c.execute("UPDATE devices SET user_id=NULL WHERE user_id=?",(uid,))
+    c.execute("DELETE FROM users WHERE id=? AND role='client'",(uid,))
+    c.commit(); c.close()
+    flash("تم حذف حساب العميل ومسح البيانات القديمة لأجهزته. الأجهزة بقيت مسجلة بدون عميل.","ok")
+    return redirect("/admin#accounts")
+
 @app.post("/admin/device")
 @login_required(admin=True)
 def add_device():
@@ -706,7 +750,7 @@ def add_device():
         c.execute("""INSERT INTO devices(platform_id,device_id,name,plate,vehicle_model,vehicle_color,tracker_phone,admin_notes,user_id,subscription_start,subscription_end)
                      VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                   (pid,device_id,request.form["name"].strip(),request.form.get("plate","").strip(),
-                   request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),request.form.get("tracker_phone","").strip(),request.form.get("admin_notes","").strip(),
+                   request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),request.form.get("tracker_phone","").strip(),"",
                    int(request.form["user_id"]) if request.form.get("user_id") else None,
                    parse_dmy(request.form.get("subscription_start")),parse_dmy(request.form.get("subscription_end"))))
         c.commit();flash(f"تمت إضافة الجهاز برقم الشركة {pid}","ok")
@@ -720,7 +764,7 @@ def edit_device(pid):
     c.execute("""UPDATE devices SET name=?,plate=?,vehicle_model=?,vehicle_color=?,tracker_phone=?,admin_notes=?,user_id=?,subscription_start=?,subscription_end=?
                  WHERE platform_id=?""",
               (request.form["name"].strip(),request.form.get("plate","").strip(),
-               request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),request.form.get("tracker_phone","").strip(),request.form.get("admin_notes","").strip(),
+               request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),request.form.get("tracker_phone","").strip(),"",
                int(request.form["user_id"]) if request.form.get("user_id") else None,
                parse_dmy(request.form.get("subscription_start")),
                parse_dmy(request.form.get("subscription_end")),pid))
