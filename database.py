@@ -27,6 +27,7 @@ def init():
       allow_immobilize INTEGER NOT NULL DEFAULT 0,
       overspeed_enabled INTEGER NOT NULL DEFAULT 0,
       overspeed_limit REAL DEFAULT 100,
+      language TEXT NOT NULL DEFAULT 'ar',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -147,6 +148,10 @@ def init():
         c.execute("ALTER TABLE users ADD COLUMN overspeed_enabled INTEGER NOT NULL DEFAULT 0")
     if "overspeed_limit" not in ucols:
         c.execute("ALTER TABLE users ADD COLUMN overspeed_limit REAL DEFAULT 100")
+
+    ucols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+    if "language" not in ucols:
+        c.execute("ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'ar'")
 
     dcols = {r[1] for r in c.execute("PRAGMA table_info(devices)")}
     if "plate" not in dcols:

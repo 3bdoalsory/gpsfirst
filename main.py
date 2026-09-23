@@ -17,7 +17,14 @@ _LAST_GPS_CLEANUP = 0.0
 
 @app.context_processor
 def map_config():
-    return {'google_maps_api_key': GOOGLE_MAPS_API_KEY, 'map_provider': MAP_PROVIDER, 'mapbox_access_token': MAPBOX_ACCESS_TOKEN}
+    lang='ar'
+    uid=session.get('user_id')
+    if uid:
+        try:
+            c=db(); r=c.execute("SELECT language FROM users WHERE id=?",(uid,)).fetchone(); c.close()
+            if r and r['language'] in ('ar','en'): lang=r['language']
+        except Exception: pass
+    return {'google_maps_api_key': GOOGLE_MAPS_API_KEY, 'map_provider': MAP_PROVIDER, 'mapbox_access_token': MAPBOX_ACCESS_TOKEN, 'current_lang': lang}
 
 @app.after_request
 def cache_static_assets(response):
@@ -281,6 +288,16 @@ def login():
 def logout():
     session.clear()
     return redirect("/")
+
+
+@app.post("/api/language")
+@login_required()
+def set_language():
+    lang=(request.get_json(silent=True) or {}).get("language","")
+    if lang not in ("ar","en"):
+        return jsonify(ok=False,error="invalid_language"),400
+    c=db(); c.execute("UPDATE users SET language=? WHERE id=?",(lang,session["user_id"])); c.commit(); c.close()
+    return jsonify(ok=True,language=lang)
 
 @app.get("/dashboard")
 @login_required()
