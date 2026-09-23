@@ -10,13 +10,14 @@ app = Flask(__name__)
 app.secret_key = os.getenv("GPS_SECRET_KEY", "dev-change-me")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
 MAP_PROVIDER = os.getenv("MAP_PROVIDER", "leaflet").strip().lower()
+MAPBOX_ACCESS_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN", "").strip()
 DB = Path(os.getenv("GPS_DB_PATH", str(Path(__file__).with_name("gpsplatform.db"))))
 init_database()
 _LAST_GPS_CLEANUP = 0.0
 
 @app.context_processor
 def map_config():
-    return {'google_maps_api_key': GOOGLE_MAPS_API_KEY, 'map_provider': MAP_PROVIDER}
+    return {'google_maps_api_key': GOOGLE_MAPS_API_KEY, 'map_provider': MAP_PROVIDER, 'mapbox_access_token': MAPBOX_ACCESS_TOKEN}
 
 @app.after_request
 def cache_static_assets(response):
@@ -522,38 +523,6 @@ def geofence_delete(fid):
     c=db(); c.execute("DELETE FROM geofence_devices WHERE geofence_id=?",(fid,)); c.execute("DELETE FROM geofences WHERE id=? AND user_id=?",(fid,session["user_id"])); c.commit(); c.close()
     flash("تم حذف الزون","ok"); return redirect("/geofences")
 
-@app.post("/share/<int:pid>")
-@login_required()
-def create_share(pid):
-    c=db(); d=c.execute("SELECT * FROM devices WHERE platform_id=?",(pid,)).fetchone()
-    if not can_access_device(d): c.close(); return jsonify(error="forbidden"),403
-    try: hours=max(1,min(168,int(request.form.get("hours",24))))
-    except Exception: hours=24
-    token=secrets.token_urlsafe(24); expires=datetime.utcnow()+timedelta(hours=hours)
-    c.execute("INSERT INTO location_shares(token,device_pk,user_id,expires_at) VALUES(?,?,?,?)",(token,d["id"],session["user_id"],expires.isoformat(timespec="seconds"))); c.commit(); c.close()
-    return jsonify(ok=True,url=request.host_url.rstrip('/')+'/s/'+token,expires_at=expires.isoformat(timespec="minutes"))
-
-@app.get("/s/<token>")
-def shared_location(token):
-    c=db(); row=c.execute("SELECT s.*,d.platform_id,d.name,d.plate,d.vehicle_color,d.device_id FROM location_shares s JOIN devices d ON d.id=s.device_pk WHERE s.token=?",(token,)).fetchone(); c.close()
-    if not row:
-        return "رابط المشاركة غير صالح",404
-    try:
-        if datetime.fromisoformat(row["expires_at"])<datetime.utcnow(): return "انتهت صلاحية رابط المشاركة",410
-    except Exception: return "رابط المشاركة غير صالح",410
-    return render_template("shared_location.html",share=dict(row))
-
-@app.get("/api/share/<token>")
-def shared_location_api(token):
-    c=db(); row=c.execute("SELECT s.expires_at,d.* FROM location_shares s JOIN devices d ON d.id=s.device_pk WHERE s.token=?",(token,)).fetchone()
-    if not row: c.close(); return jsonify(error="invalid"),404
-    try:
-        if datetime.fromisoformat(row["expires_at"])<datetime.utcnow(): c.close(); return jsonify(error="expired"),410
-    except Exception: c.close(); return jsonify(error="expired"),410
-    p=c.execute("SELECT latitude,longitude,speed,heading,created_at FROM gps_data WHERE device_id=? ORDER BY id DESC LIMIT 1",(row["device_id"],)).fetchone(); c.close()
-    if not p or signal_status(p["created_at"],p["speed"])=="offline": return jsonify(available=False)
-    return jsonify(available=True,**dict(p))
-
 @app.get("/admin")
 @login_required(admin=True)
 def admin():
@@ -727,7 +696,6 @@ def delete_user_account(uid):
         c.execute("DELETE FROM immobilize_requests WHERE device_pk=?",(pk,))
         c.execute("DELETE FROM service_audit WHERE device_pk=?",(pk,))
         c.execute("DELETE FROM notifications WHERE device_pk=?",(pk,))
-        c.execute("DELETE FROM location_shares WHERE device_pk=?",(pk,))
         c.execute("DELETE FROM geofence_devices WHERE device_pk=?",(pk,))
         c.execute("DELETE FROM gps_data WHERE device_id=?",(did,))
     # Zones belong to the client account, so remove them and their assignments.
@@ -735,7 +703,6 @@ def delete_user_account(uid):
     for fid in fence_ids: c.execute("DELETE FROM geofence_devices WHERE geofence_id=?",(fid,))
     c.execute("DELETE FROM geofences WHERE user_id=?",(uid,))
     c.execute("DELETE FROM notifications WHERE user_id=?",(uid,))
-    c.execute("DELETE FROM location_shares WHERE user_id=?",(uid,))
     c.execute("UPDATE devices SET user_id=NULL WHERE user_id=?",(uid,))
     c.execute("DELETE FROM users WHERE id=? AND role='client'",(uid,))
     c.commit(); c.close()
