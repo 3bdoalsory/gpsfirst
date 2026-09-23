@@ -24,7 +24,7 @@ function gsmClass(v){v=Number(v);if(!Number.isFinite(v))return'offline';return v
 function setSignalDot(id,v){const el=document.querySelector(`.vehicle-row[data-id="${id}"] .dot`);if(!el)return;el.className='dot gsm-'+gsmClass(v);el.title=Number.isFinite(Number(v))?'GSM: '+v:'لا توجد إشارة'}
 function vehicleMarkerColor(x){if((Number(x?.speed)||0)>1)return '#00b86b';return Number(x?.acc)===1?'#38a9ff':'#9aa7b4'}
 function carSymbol(heading,speed,acc){return {path:google.maps.SymbolPath.FORWARD_CLOSED_ARROW,scale:7,rotation:Number(heading)||0,fillColor:vehicleMarkerColor({speed,acc}),fillOpacity:1,strokeColor:'#000000',strokeWeight:2.5}}
-const map=new google.maps.Map(document.getElementById('map'),{center:{lat:33.97,lng:36.67},zoom:12,mapTypeId:'roadmap',streetViewControl:false,mapTypeControl:false,fullscreenControl:false,clickableIcons:false,gestureHandling:'greedy'});
+const map=new google.maps.Map(document.getElementById('map'),{center:{lat:33.97,lng:36.67},zoom:12,mapId:'b6a317a50c27f0b7acbd8f73',mapTypeId:'roadmap',streetViewControl:false,mapTypeControl:false,fullscreenControl:false,clickableIcons:false,gestureHandling:'greedy'});
 
 const providerSelect=document.getElementById('mapProviderSelect'), styleSelect=document.getElementById('mapStyleSelect'), libreEl=document.getElementById('libreMap');
 const MAPBOX_TOKEN={{mapbox_access_token|tojson}};

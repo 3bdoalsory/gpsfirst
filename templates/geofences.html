@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block head %}
-<script src="https://maps.googleapis.com/maps/api/js?key={{google_maps_api_key|e}}&v=weekly"></script>{% endblock %}
+<script src="https://maps.googleapis.com/maps/api/js?key={{google_maps_api_key|e}}&v=weekly&language={{current_lang}}"></script>{% endblock %}
 {% block content %}<div class="page geofence-page"><div class="page-title"><div><small>SMART ZONES</small><h1>الزون والتنبيهات</h1><p>ارسم حدود الزون، وهو يطبق على جميع المركبات المحددة أدناه. أزل الصح فقط عن المركبات المستثناة.</p></div><a class="ghost" href="/dashboard">← العودة للخريطة</a></div>
 <div class="geo-grid"><div class="glass geo-form"><h3>إنشاء زون جديد</h3><form method="post" id="geoForm">
 <button type="button" class="zone-device-toggle" aria-expanded="false">المركبات المشمولة <span>⌄</span></button><div class="zone-device-checks collapsible" hidden>{% for d in devices %}<label><input type="checkbox" name="device_pks" value="{{d.id}}" checked> <span>{{d.name}} · ID {{d.platform_id}}</span></label>{% endfor %}</div>
@@ -13,7 +13,7 @@
 <label><input type="checkbox" name="is_active" {% if f.is_active %}checked{% endif %}> فعالة</label><button>حفظ التعديل</button></form>
 <form method="post" action="/geofences/{{f.id}}/delete" onsubmit="return confirm('حذف الزون؟')"><button class="delete-zone">حذف</button></form></div>{% else %}<div class="empty glass">لا يوجد زون محفوظ بعد.</div>{% endfor %}</div></div>{% endblock %}
 {% block scripts %}<script>
-const map=new google.maps.Map(document.getElementById('gmap'),{center:{lat:33.97,lng:36.67},zoom:12,mapTypeId:'roadmap',mapTypeControl:true,streetViewControl:false,fullscreenControl:false});
+const map=new google.maps.Map(document.getElementById('gmap'),{center:{lat:33.97,lng:36.67},zoom:12,mapId:'b6a317a50c27f0b7acbd8f73',mapTypeId:'roadmap',mapTypeControl:true,streetViewControl:false,fullscreenControl:false});
 let newPoly=null,drawPoints=[],firstMarker=null,drawing=false;const saved={};
 const createColor=()=>document.querySelector('#geoForm .zone-color')?.value||'#29c7e8';
 function arrFromPath(path){const a=[];for(let i=0;i<path.getLength();i++){const p=path.getAt(i);a.push([p.lat(),p.lng()])}return a}
