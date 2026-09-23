@@ -3,7 +3,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from pathlib import Path
 from datetime import date, timedelta, datetime
 from functools import wraps
-import sqlite3, os, json, math, time, io
+import sqlite3, os, json, math, time, io, secrets
 from database import init as init_database
 
 app = Flask(__name__)
@@ -88,8 +88,30 @@ def signal_status(last_update, speed=0, timeout_seconds=120):
         return "offline"
     return "moving" if float(speed or 0) > 1 else "stopped"
 
+
+def relative_offline_time(value):
+    if not value: return "غير معروف"
+    try:
+        dt=datetime.fromisoformat(str(value).replace("Z","+00:00").replace("+00:00",""))
+        sec=max(0,(datetime.utcnow()-dt).total_seconds())
+        hours=int(sec//3600)
+        if sec < 86400: return f"{max(1,hours)} ساعة" if hours!=1 else "ساعة واحدة"
+        days=int(sec//86400)
+        if days < 30: return f"{days} يوم"
+        months=int(days//30)
+        if days < 365: return f"{months} شهر" if months==1 else f"{months} أشهر"
+        years=int(days//365)
+        return "سنة واحدة" if years==1 else f"{years} سنوات"
+    except Exception: return "غير معروف"
+
+def vehicle_label(d):
+    parts=[f'ID {d["platform_id"]}', d["name"]]
+    if d["plate"]: parts.append(f'لوحة {d["plate"]}')
+    if d["vehicle_color"]: parts.append(f'لون {d["vehicle_color"]}')
+    return " · ".join(parts)
+
 def sync_subscription_notifications(c, user_id):
-    rows=c.execute("SELECT id,platform_id,name,subscription_end FROM devices WHERE user_id=? AND service_status!='final' AND subscription_end IS NOT NULL",(user_id,)).fetchall()
+    rows=c.execute("SELECT id,platform_id,name,plate,vehicle_color,subscription_end FROM devices WHERE user_id=? AND service_status!='final' AND subscription_end IS NOT NULL",(user_id,)).fetchall()
     today=date.today()
     for d in rows:
         try:
@@ -98,7 +120,7 @@ def sync_subscription_notifications(c, user_id):
         if 0 <= days <= 30:
             kind=f'subscription:{d["id"]}:{end.isoformat()}'
             if not c.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind=?",(user_id,kind)).fetchone():
-                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(user_id,d["id"],kind,"اقتراب انتهاء الاشتراك",f'اشتراك المركبة {d["platform_id"]} · {d["name"]} ينتهي خلال {days} يوم'))
+                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(user_id,d["id"],kind,"اقتراب انتهاء الاشتراك",f'{vehicle_label(d)} · ينتهي الاشتراك خلال {days} يوم'))
 
 def process_geofences(c,d,lat,lon):
     if not d["user_id"]: return
@@ -116,7 +138,7 @@ def process_geofences(c,d,lat,lon):
         ok=(inside and f["alert_type"] in ("enter","both")) or ((not inside) and f["alert_type"] in ("exit","both"))
         if ok:
             c.execute("""INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)""",
-                      (d["user_id"],d["id"],kind,"تنبيه منطقة",f'المركبة {d["platform_id"]} {"دخلت" if inside else "خرجت من"} منطقة {f["name"]}'))
+                      (d["user_id"],d["id"],kind,"تنبيه منطقة",f'{vehicle_label(d)} {"دخلت" if inside else "خرجت من"} منطقة {f["name"]}'))
 
 def refresh_pending_immobilize(c,d):
     r=c.execute("SELECT * FROM immobilize_requests WHERE device_pk=? AND status='pending_stop' ORDER BY id DESC LIMIT 1",(d["id"],)).fetchone()
@@ -290,7 +312,7 @@ def dashboard():
     c.close()
     devices=[]
     for x in rows:
-        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False; z["online_state"]=signal_status(x["last_update"],x["speed"]); z["is_offline"]=z["online_state"]=="offline"; z["gsm_status"]="offline" if z["is_offline"] else gsm_status(x["gsm_signal"]); z["gsm_signal"]=None if z["is_offline"] else z["gsm_signal"]; z["battery_percent"]=None if z["is_offline"] else z["battery_percent"]
+        z=dict(x); z["state"]=device_state(x); z["subscription_soon"]=False; z["online_state"]=signal_status(x["last_update"],x["speed"]); z["is_offline"]=z["online_state"]=="offline"; z["gsm_status"]="offline" if z["is_offline"] else gsm_status(x["gsm_signal"]); z["gsm_signal"]=None if z["is_offline"] else z["gsm_signal"]; z["battery_percent"]=None if z["is_offline"] else z["battery_percent"]; z["offline_for"]=relative_offline_time(x["last_update"]) if z["is_offline"] else None
         if x["subscription_end"]:
             try: z["subscription_soon"]=(date.fromisoformat(x["subscription_end"])-date.today()).days <= 30
             except ValueError: pass
@@ -345,6 +367,20 @@ def tracker_ingest():
         c.close(); return jsonify(ok=False,error="device_unavailable",state=st),409
     c.execute("INSERT INTO gps_data(device_id,latitude,longitude,speed,heading,acc,gsm_signal,battery_percent,raw_data) VALUES(?,?,?,?,?,?,?,?,?)",
               (did,lat,lon,round(speed,2),heading,acc,gsm,battery,str(raw_data)))
+    if d["user_id"]:
+        u=c.execute("SELECT overspeed_enabled,overspeed_limit FROM users WHERE id=?",(d["user_id"],)).fetchone()
+        if u and u["overspeed_enabled"] and speed>float(u["overspeed_limit"] or 100):
+            bucket=datetime.utcnow().strftime("%Y%m%d%H%M")
+            kind=f'overspeed:{d["id"]}:{bucket}'
+            if not c.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind=?",(d["user_id"],kind)).fetchone():
+                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"تجاوز السرعة",f'{vehicle_label(d)} تجاوزت السرعة المحددة: {speed:.0f} km/h'))
+        power_disc = payload.get("power_disconnected") is True or payload.get("external_power") in (False,0,"0","off","disconnected")
+        if power_disc:
+            bucket=datetime.utcnow().strftime("%Y%m%d%H")
+            kind=f'power_disconnect:{d["id"]}:{bucket}'
+            if not c.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind=?",(d["user_id"],kind)).fetchone():
+                now=datetime.utcnow().strftime("%d/%m/%Y %H:%M")
+                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"فصل كهرباء جهاز GPS",f'{vehicle_label(d)} · تم رصد فصل التغذية بتاريخ ووقت {now}'))
     refresh_pending_immobilize(c,d)
     process_geofences(c,d,lat,lon)
     cleanup_old_gps(c)
@@ -365,7 +401,7 @@ def latest(pid):
     online_state=signal_status(payload.get("created_at"),payload.get("speed")) if p else "offline"
     if online_state=="offline":
         payload["gsm_signal"]=None; payload["battery_percent"]=None
-        return jsonify(available=False,state="offline",online_state="offline",gsm_status="offline",**payload)
+        return jsonify(available=False,state="offline",online_state="offline",gsm_status="offline",offline_for=relative_offline_time(payload.get("created_at")),**payload)
     return jsonify(available=bool(p),state=st,online_state=online_state,gsm_status=gsm_status(payload.get("gsm_signal")),**payload)
 
 @app.get("/history/<int:pid>")
@@ -415,7 +451,17 @@ def history_api(pid):
             distance_km += 6371.0088 * 2 * math.asin(min(1,math.sqrt(h)))
         except Exception: pass
     max_speed=max([(p["speed"] or 0) for p in pts],default=0)
-    return jsonify(points=pts,stops=stops,distance_km=round(distance_km,2),max_speed=round(max_speed,1))
+    
+    moving=[float(p["speed"] or 0) for p in pts if float(p["speed"] or 0)>1]
+    avg_speed=(sum(moving)/len(moving)) if moving else 0
+    total_stop_minutes=sum(int(q.get("minutes",0)) for q in stops)
+    start_time=pts[0]["created_at"] if pts else None
+    end_time=pts[-1]["created_at"] if pts else None
+    duration_seconds=0
+    if start_time and end_time:
+        try: duration_seconds=max(0,int((datetime.fromisoformat(end_time)-datetime.fromisoformat(start_time)).total_seconds()))
+        except Exception: pass
+    return jsonify(points=pts,stops=stops,distance_km=round(distance_km,2),max_speed=round(max_speed,1),avg_speed=round(avg_speed,1),total_stop_minutes=total_stop_minutes,start_time=start_time,end_time=end_time,duration_seconds=duration_seconds)
 
 @app.route("/geofences",methods=["GET","POST"])
 @login_required()
@@ -430,7 +476,7 @@ def geofences():
         selected=[x for x in selected if x in allowed]
         if len(poly)>=3 and selected:
             cur=c.execute("""INSERT INTO geofences(user_id,device_pk,name,polygon_json,alert_type,sms_enabled,color)\n                             VALUES(?,?,?,?,?,?,?)""",
-                          (session["user_id"],selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],1 if request.form.get("sms_enabled") else 0,request.form.get("color") or "#29c7e8"))
+                          (session["user_id"],selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],0,request.form.get("color") or "#29c7e8"))
             fid=cur.lastrowid
             c.executemany("INSERT INTO geofence_devices(geofence_id,device_pk) VALUES(?,?)",[(fid,x) for x in selected])
             c.commit(); flash("تم حفظ الزون بنجاح","ok")
@@ -460,7 +506,7 @@ def geofence_edit(fid):
     selected=[x for x in selected if x in allowed]
     if len(poly)>=3 and selected:
         c.execute("UPDATE geofences SET device_pk=?,name=?,polygon_json=?,alert_type=?,sms_enabled=?,color=?,is_active=? WHERE id=?",
-                  (selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],1 if request.form.get("sms_enabled") else 0,request.form.get("color") or "#29c7e8",1 if request.form.get("is_active") else 0,fid))
+                  (selected[0],request.form["name"],json.dumps(poly),request.form["alert_type"],0,request.form.get("color") or "#29c7e8",1 if request.form.get("is_active") else 0,fid))
         c.execute("DELETE FROM geofence_devices WHERE geofence_id=?",(fid,))
         c.executemany("INSERT INTO geofence_devices(geofence_id,device_pk) VALUES(?,?)",[(fid,x) for x in selected])
         c.commit(); flash("تم تعديل الزون","ok")
@@ -472,6 +518,38 @@ def geofence_edit(fid):
 def geofence_delete(fid):
     c=db(); c.execute("DELETE FROM geofence_devices WHERE geofence_id=?",(fid,)); c.execute("DELETE FROM geofences WHERE id=? AND user_id=?",(fid,session["user_id"])); c.commit(); c.close()
     flash("تم حذف الزون","ok"); return redirect("/geofences")
+
+@app.post("/share/<int:pid>")
+@login_required()
+def create_share(pid):
+    c=db(); d=c.execute("SELECT * FROM devices WHERE platform_id=?",(pid,)).fetchone()
+    if not can_access_device(d): c.close(); return jsonify(error="forbidden"),403
+    try: hours=max(1,min(168,int(request.form.get("hours",24))))
+    except Exception: hours=24
+    token=secrets.token_urlsafe(24); expires=datetime.utcnow()+timedelta(hours=hours)
+    c.execute("INSERT INTO location_shares(token,device_pk,user_id,expires_at) VALUES(?,?,?,?)",(token,d["id"],session["user_id"],expires.isoformat(timespec="seconds"))); c.commit(); c.close()
+    return jsonify(ok=True,url=request.host_url.rstrip('/')+'/s/'+token,expires_at=expires.isoformat(timespec="minutes"))
+
+@app.get("/s/<token>")
+def shared_location(token):
+    c=db(); row=c.execute("SELECT s.*,d.platform_id,d.name,d.plate,d.vehicle_color,d.device_id FROM location_shares s JOIN devices d ON d.id=s.device_pk WHERE s.token=?",(token,)).fetchone(); c.close()
+    if not row:
+        return "رابط المشاركة غير صالح",404
+    try:
+        if datetime.fromisoformat(row["expires_at"])<datetime.utcnow(): return "انتهت صلاحية رابط المشاركة",410
+    except Exception: return "رابط المشاركة غير صالح",410
+    return render_template("shared_location.html",share=dict(row))
+
+@app.get("/api/share/<token>")
+def shared_location_api(token):
+    c=db(); row=c.execute("SELECT s.expires_at,d.* FROM location_shares s JOIN devices d ON d.id=s.device_pk WHERE s.token=?",(token,)).fetchone()
+    if not row: c.close(); return jsonify(error="invalid"),404
+    try:
+        if datetime.fromisoformat(row["expires_at"])<datetime.utcnow(): c.close(); return jsonify(error="expired"),410
+    except Exception: c.close(); return jsonify(error="expired"),410
+    p=c.execute("SELECT latitude,longitude,speed,heading,created_at FROM gps_data WHERE device_id=? ORDER BY id DESC LIMIT 1",(row["device_id"],)).fetchone(); c.close()
+    if not p or signal_status(p["created_at"],p["speed"])=="offline": return jsonify(available=False)
+    return jsonify(available=True,**dict(p))
 
 @app.get("/admin")
 @login_required(admin=True)
@@ -497,6 +575,23 @@ def admin():
     expiring.sort(key=lambda x:x.get("subscription_end") or "")
     c.close()
     return render_template("admin.html",clients=clients,devices=devices,audits=audits,settings=settings,expired=expired,expiring=expiring)
+
+@app.post("/admin/view-client/<int:uid>")
+@login_required(admin=True)
+def admin_view_client(uid):
+    c=db(); u=c.execute("SELECT * FROM users WHERE id=? AND role='client'",(uid,)).fetchone(); c.close()
+    if not u: return redirect("/admin#accounts")
+    session["admin_return_id"]=session["user_id"]; session["admin_return_username"]=session["username"]
+    session["user_id"]=u["id"]; session["username"]=u["username"]; session["role"]="client"; session["view_as_client"]=True
+    return redirect("/dashboard")
+
+@app.get("/admin/return")
+@login_required()
+def admin_return():
+    aid=session.get("admin_return_id")
+    if not aid: return redirect("/dashboard")
+    name=session.get("admin_return_username","admin"); session.clear(); session["user_id"]=aid; session["username"]=name; session["role"]="admin"
+    return redirect("/admin#accounts")
 
 @app.post("/api/notifications/read")
 @login_required()
@@ -571,9 +666,9 @@ def add_user():
     if c.execute("SELECT 1 FROM users WHERE lower(username)=lower(?)",(username,)).fetchone():
         c.close(); flash("اسم المستخدم موجود مسبقًا","error"); return redirect("/admin#accounts")
     try:
-        c.execute("INSERT INTO users(username,password_hash,role,phone,allow_immobilize) VALUES(?,?,'client',?,?)",
+        c.execute("INSERT INTO users(username,password_hash,role,phone,allow_immobilize,overspeed_enabled,overspeed_limit) VALUES(?,?,'client',?,?,?,?)",
                   (username,generate_password_hash(request.form["password"]),
-                   request.form.get("phone","").strip(),1 if request.form.get("allow_immobilize") else 0))
+                   request.form.get("phone","").strip(),1 if request.form.get("allow_immobilize") else 0,1 if request.form.get("overspeed_enabled") else 0,float(request.form.get("overspeed_limit") or 100)))
         c.commit();flash("تم إنشاء الحساب","ok")
     except sqlite3.IntegrityError: flash("اسم المستخدم موجود مسبقًا","error")
     c.close();return redirect("/admin#accounts")
@@ -587,7 +682,7 @@ def edit_user(uid):
         c.close(); flash("اسم المستخدم موجود مسبقًا","error"); return redirect("/admin#accounts")
     c.execute("UPDATE users SET username=?,phone=? WHERE id=? AND role='client'",
               (username,request.form.get("phone","").strip(),uid))
-    c.execute("UPDATE users SET allow_immobilize=? WHERE id=? AND role=\'client\'",(1 if request.form.get("allow_immobilize") else 0,uid))
+    c.execute("UPDATE users SET allow_immobilize=?,overspeed_enabled=?,overspeed_limit=? WHERE id=? AND role=\'client\'",(1 if request.form.get("allow_immobilize") else 0,1 if request.form.get("overspeed_enabled") else 0,float(request.form.get("overspeed_limit") or 100),uid))
     if request.form.get("password","").strip():
         c.execute("UPDATE users SET password_hash=? WHERE id=?",
                   (generate_password_hash(request.form["password"]),uid))
@@ -608,10 +703,10 @@ def add_device():
         c.close(); flash("Device ID موجود مسبقًا","error"); return redirect("/admin#devices")
     pid=c.execute("SELECT COALESCE(MAX(platform_id),10000)+1 n FROM devices").fetchone()["n"]
     try:
-        c.execute("""INSERT INTO devices(platform_id,device_id,name,plate,vehicle_model,vehicle_color,user_id,subscription_start,subscription_end)
-                     VALUES(?,?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO devices(platform_id,device_id,name,plate,vehicle_model,vehicle_color,tracker_phone,admin_notes,user_id,subscription_start,subscription_end)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                   (pid,device_id,request.form["name"].strip(),request.form.get("plate","").strip(),
-                   request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),
+                   request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),request.form.get("tracker_phone","").strip(),request.form.get("admin_notes","").strip(),
                    int(request.form["user_id"]) if request.form.get("user_id") else None,
                    parse_dmy(request.form.get("subscription_start")),parse_dmy(request.form.get("subscription_end"))))
         c.commit();flash(f"تمت إضافة الجهاز برقم الشركة {pid}","ok")
@@ -622,10 +717,10 @@ def add_device():
 @login_required(admin=True)
 def edit_device(pid):
     c=db()
-    c.execute("""UPDATE devices SET name=?,plate=?,vehicle_model=?,vehicle_color=?,user_id=?,subscription_start=?,subscription_end=?
+    c.execute("""UPDATE devices SET name=?,plate=?,vehicle_model=?,vehicle_color=?,tracker_phone=?,admin_notes=?,user_id=?,subscription_start=?,subscription_end=?
                  WHERE platform_id=?""",
               (request.form["name"].strip(),request.form.get("plate","").strip(),
-               request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),
+               request.form.get("vehicle_model","").strip(),request.form.get("vehicle_color","").strip(),request.form.get("tracker_phone","").strip(),request.form.get("admin_notes","").strip(),
                int(request.form["user_id"]) if request.form.get("user_id") else None,
                parse_dmy(request.form.get("subscription_start")),
                parse_dmy(request.form.get("subscription_end")),pid))

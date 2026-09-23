@@ -25,6 +25,8 @@ def init():
       phone TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       allow_immobilize INTEGER NOT NULL DEFAULT 0,
+      overspeed_enabled INTEGER NOT NULL DEFAULT 0,
+      overspeed_limit REAL DEFAULT 100,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -36,6 +38,8 @@ def init():
       plate TEXT DEFAULT '',
       vehicle_model TEXT DEFAULT '',
       vehicle_color TEXT DEFAULT '',
+      tracker_phone TEXT DEFAULT '',
+      admin_notes TEXT DEFAULT '',
       user_id INTEGER,
       service_status TEXT NOT NULL DEFAULT 'active',
       subscription_start DATE,
@@ -118,6 +122,18 @@ def init():
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS location_shares(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT UNIQUE NOT NULL,
+      device_pk INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(device_pk) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_location_shares_token ON location_shares(token);
     """)
 
     # Upgrade existing databases without deleting users/devices/GPS history.
@@ -127,6 +143,10 @@ def init():
     ucols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
     if "allow_immobilize" not in ucols:
         c.execute("ALTER TABLE users ADD COLUMN allow_immobilize INTEGER NOT NULL DEFAULT 0")
+    if "overspeed_enabled" not in ucols:
+        c.execute("ALTER TABLE users ADD COLUMN overspeed_enabled INTEGER NOT NULL DEFAULT 0")
+    if "overspeed_limit" not in ucols:
+        c.execute("ALTER TABLE users ADD COLUMN overspeed_limit REAL DEFAULT 100")
 
     dcols = {r[1] for r in c.execute("PRAGMA table_info(devices)")}
     if "plate" not in dcols:
@@ -135,6 +155,10 @@ def init():
         c.execute("ALTER TABLE devices ADD COLUMN vehicle_model TEXT DEFAULT ''")
     if "vehicle_color" not in dcols:
         c.execute("ALTER TABLE devices ADD COLUMN vehicle_color TEXT DEFAULT ''")
+    if "tracker_phone" not in dcols:
+        c.execute("ALTER TABLE devices ADD COLUMN tracker_phone TEXT DEFAULT ''")
+    if "admin_notes" not in dcols:
+        c.execute("ALTER TABLE devices ADD COLUMN admin_notes TEXT DEFAULT ''")
 
     gpscols = {r[1] for r in c.execute("PRAGMA table_info(gps_data)")}
     if "acc" not in gpscols:
