@@ -311,6 +311,7 @@ def dashboard():
        (SELECT longitude FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) longitude,
        (SELECT speed FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) speed,
        (SELECT heading FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) heading,
+       (SELECT acc FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) acc,
        (SELECT created_at FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) last_update,
        (SELECT gsm_signal FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) gsm_signal,
        (SELECT battery_percent FROM gps_data g WHERE g.device_id=d.device_id ORDER BY g.id DESC LIMIT 1) battery_percent
