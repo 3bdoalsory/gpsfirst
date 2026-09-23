@@ -270,6 +270,9 @@ def login():
             app.permanent_session_lifetime = timedelta(days=30)
         return redirect("/admin" if u["role"]=="admin" else "/dashboard")
     if session.get("user_id"):
+        if session.get("view_as_client"):
+            session.clear()
+            return render_template("login.html")
         return redirect("/admin" if session.get("role")=="admin" else "/dashboard")
     return render_template("login.html")
 
@@ -585,7 +588,7 @@ def admin_view_client(uid):
     session["user_id"]=u["id"]; session["username"]=u["username"]; session["role"]="client"; session["view_as_client"]=True
     return redirect("/dashboard")
 
-@app.get("/admin/return")
+@app.route("/admin/return", methods=["GET","POST"])
 def admin_return():
     # Restore the original admin session after "view as client".
     aid=session.get("admin_return_id")

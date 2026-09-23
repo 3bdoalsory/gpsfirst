@@ -1,7 +1,7 @@
 <!doctype html><html lang="ar" dir="rtl"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}3bdoalsory{% endblock %}</title>
-<link rel="stylesheet" href="{{url_for('static',filename='style.css')}}?v=950">
+<link rel="stylesheet" href="{{url_for('static',filename='style.css')}}?v=962">
 {% block head %}{% endblock %}</head><body class="{% if session.get('role') == 'admin' %}admin-page{% elif session.get('role') %}client-page{% endif %}">
 <div class="ambient a1"></div><div class="ambient a2"></div>
 {% if session.get("user_id") %}
