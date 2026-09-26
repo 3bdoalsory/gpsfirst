@@ -60,6 +60,7 @@ def init():
       gsm_signal INTEGER,
       battery_percent INTEGER,
       raw_data TEXT,
+      device_time TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_gps_device_time ON gps_data(device_id, created_at);
@@ -172,6 +173,9 @@ def init():
         c.execute("ALTER TABLE gps_data ADD COLUMN gsm_signal INTEGER")
     if "battery_percent" not in gpscols:
         c.execute("ALTER TABLE gps_data ADD COLUMN battery_percent INTEGER")
+    if "device_time" not in gpscols:
+        c.execute("ALTER TABLE gps_data ADD COLUMN device_time TIMESTAMP")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_gps_device_device_time ON gps_data(device_id, device_time)")
 
     # V3 used circular geofences. Preserve it as backup and create polygon schema.
     gcols = {r[1] for r in c.execute("PRAGMA table_info(geofences)")}

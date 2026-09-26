@@ -9,7 +9,7 @@ from database import init as init_database
 app = Flask(__name__)
 app.secret_key = os.getenv("GPS_SECRET_KEY", "dev-change-me")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
-MAP_PROVIDER = os.getenv("MAP_PROVIDER", "leaflet").strip().lower()
+MAP_PROVIDER = os.getenv("MAP_PROVIDER", "openfree").strip().lower()
 MAPBOX_ACCESS_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN", "").strip()
 DB = Path(os.getenv("GPS_DB_PATH", str(Path(__file__).with_name("gpsplatform.db"))))
 init_database()
@@ -372,6 +372,9 @@ def tracker_ingest():
         if unit in ("knot","knots","kt","kts"): speed*=1.852
         heading=float(payload.get("heading",payload.get("course",0)) or 0)
         acc=parse_acc(payload.get("acc"))
+        device_time=(str(payload.get("device_time") or "").strip() or None)
+        if device_time:
+            device_time=datetime.fromisoformat(device_time).replace(tzinfo=None).isoformat(timespec="seconds")
         raw_data=payload.get("raw_data",payload.get("raw",json.dumps(payload,ensure_ascii=False)))
         gsm=payload.get("gsm_signal"); battery=payload.get("battery_percent")
         if gsm is None or battery is None:
@@ -387,8 +390,14 @@ def tracker_ingest():
     st=device_state(d)
     if st in ("expired","temporary","final") or not d["user_id"]:
         c.close(); return jsonify(ok=False,error="device_unavailable",state=st),409
-    c.execute("INSERT INTO gps_data(device_id,latitude,longitude,speed,heading,acc,gsm_signal,battery_percent,raw_data) VALUES(?,?,?,?,?,?,?,?,?)",
-              (did,lat,lon,round(speed,2),heading,acc,gsm,battery,str(raw_data)))
+    # Buffered packets can arrive after newer live packets. Never let an older GPS
+    # packet overwrite the current ACC/location state or pollute the live timeline.
+    if device_time:
+        latest=c.execute("SELECT device_time FROM gps_data WHERE device_id=? AND device_time IS NOT NULL ORDER BY device_time DESC LIMIT 1",(did,)).fetchone()
+        if latest and latest["device_time"] and device_time < latest["device_time"]:
+            c.close(); return jsonify(ok=True,ignored="stale_packet",device_time=device_time)
+    c.execute("INSERT INTO gps_data(device_id,latitude,longitude,speed,heading,acc,gsm_signal,battery_percent,raw_data,device_time) VALUES(?,?,?,?,?,?,?,?,?,?)",
+              (did,lat,lon,round(speed,2),heading,acc,gsm,battery,str(raw_data),device_time))
     if d["user_id"]:
         u=c.execute("SELECT overspeed_enabled,overspeed_limit FROM users WHERE id=?",(d["user_id"],)).fetchone()
         if u and u["overspeed_enabled"] and speed>float(u["overspeed_limit"] or 100):
