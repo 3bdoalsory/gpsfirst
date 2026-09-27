@@ -680,3 +680,11 @@ html[dir="ltr"] .map-switch{direction:ltr}
  .vehicle-info.mobile-collapsed>*{visibility:hidden;pointer-events:none}
  .mobile-bottom-nav{z-index:1260!important}
 }
+
+/* 2026-09-28 two-fix patch: reliable mobile vehicle-card collapse */
+@media(max-width:900px){
+ .vehicle-info{touch-action:pan-y!important;overscroll-behavior:contain;will-change:transform;}
+ .vehicle-info.mobile-collapsed{transform:translateY(calc(100% - 38px))!important;max-height:38px!important;min-height:38px!important;overflow:hidden!important;padding:0!important;}
+ .vehicle-info.mobile-collapsed::before{top:16px!important;width:58px!important;height:6px!important;opacity:1!important;}
+ .vehicle-info.mobile-collapsed>*{visibility:hidden!important;pointer-events:none!important;}
+}
