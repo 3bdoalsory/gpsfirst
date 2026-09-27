@@ -686,3 +686,31 @@ html[dir="ltr"] .map-switch{direction:ltr}
 @media (min-width:901px){
   .mobile-vehicle-handle{display:none!important}
 }
+
+
+/* V9.16 — true mobile-only vehicle bottom sheet. Desktop remains unchanged. */
+@media (max-width:900px){
+  .mobile-vehicle-sheet{
+    position:absolute;z-index:1270;left:10px;right:10px;bottom:88px;
+    max-height:46dvh;border-radius:22px;overflow:hidden;
+    transition:transform .22s ease,max-height .22s ease,height .22s ease;
+    touch-action:none;
+  }
+  .mobile-vehicle-sheet.is-dragging{transition:none!important}
+  .mobile-vehicle-sheet .vehicle-info{
+    position:relative!important;left:auto!important;right:auto!important;bottom:auto!important;
+    width:100%!important;max-height:calc(46dvh - 30px)!important;margin:0!important;
+    border-radius:0 0 22px 22px!important;overflow:auto!important;
+  }
+  .mobile-sheet-handle{
+    display:flex!important;width:100%!important;height:30px!important;min-height:30px!important;
+    align-items:center!important;justify-content:center!important;padding:0!important;margin:0!important;
+    border:0!important;border-radius:22px 22px 0 0!important;background:rgba(12,41,64,.96)!important;
+    box-shadow:none!important;touch-action:none!important;
+  }
+  .mobile-sheet-handle span{width:56px;height:5px;border-radius:999px;background:rgba(205,238,250,.72)}
+  .mobile-vehicle-sheet.is-collapsed{height:30px!important;max-height:30px!important;overflow:hidden!important}
+  .mobile-vehicle-sheet.is-collapsed .vehicle-info{display:none!important}
+  .mobile-vehicle-handle{display:none!important}
+}
+@media (min-width:901px){.mobile-vehicle-sheet,.mobile-sheet-handle{display:none!important}}

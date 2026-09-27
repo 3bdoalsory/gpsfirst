@@ -70,7 +70,7 @@ function gsmHtml(v){v=Number(v);const n=Number.isFinite(v)?Math.max(0,Math.min(3
 function fleetBounds(){const b=new google.maps.LatLngBounds();Object.values(markers).forEach(m=>b.extend(m.getPosition()));return b}
 function clearVehicleSelection(){selected=null;document.querySelectorAll('.vehicle-row').forEach(x=>x.classList.remove('selected'));vehicleInfo.innerHTML='<div class="info-empty"><b>اختر مركبة</b><span>اضغط على إحدى المركبات من القائمة أو الخريطة</span></div>';const b=fleetBounds();if(!b.isEmpty())map.fitBounds(b,60)}
 function showOffline(d,x){removeMarker(d.platform_id);setSignalDot(d.platform_id,null);vehicleInfo.innerHTML=`<div class="info-top"><div><small>المركبة المختارة</small><h3>${d.name}</h3></div><div class="vehicle-metrics">${gsmHtml(null)}${batteryHtml(null)}</div><span class="offline-pill">OFFLINE</span></div><div class="info-grid"><div><small>ID</small><b>${d.platform_id}</b></div><div><small>اللوحة</small><b>${d.plate||'-'}</b></div><div><small>البطارية</small><b>—</b></div><div><small>الإشارة</small><b>لا توجد إشارة</b></div><div><small>الحالة</small><b>غير متصل</b></div><div><small>آخر اتصال</small><b>منذ ${offlineAgo(x.created_at)}</b></div></div>`}
-async function selectVehicle(id,refresh=false){if(selected===id&&!refresh){clearVehicleSelection();return}const previousSelected=selected;selected=id;/* V9.15 mobile: selection no longer forces the info panel open. Only the first selection may open it; later selections and live refresh preserve the user's panel state. */if(!refresh&&previousSelected==null&&window.setMobileVehiclePanelOpen&&window.matchMedia('(max-width:900px)').matches)window.setMobileVehiclePanelOpen(true);document.querySelectorAll('.vehicle-row').forEach(x=>x.classList.toggle('selected',+x.dataset.id===id));const d=devices.find(x=>x.platform_id===id),x=await(await fetch('/api/latest/'+id)).json();if(!x.available){showOffline(d,x);return}addOrUpdateMarker(d,x);if(libreEl.hidden){map.panTo({lat:+x.latitude,lng:+x.longitude});map.setZoom(16)}else if(libreMap){libreMap.flyTo({center:[+x.longitude,+x.latitude],zoom:16})}vehicleInfo.innerHTML=`<div class="info-top"><div><small>المركبة المختارة</small><h3>${d.name}</h3></div><div class="vehicle-metrics">${gsmHtml(x.gsm_signal)}${batteryHtml(x.battery_percent)}</div><span class="live-pill">LIVE</span></div><div class="info-grid"><div><small>ID</small><b>${id}</b></div><div><small>اللوحة</small><b>${d.plate||'-'}</b></div>${d.vehicle_model?`<div><small>الموديل / الكرت</small><b>${d.vehicle_model}</b></div>`:''}${d.vehicle_color?`<div><small>اللون</small><b>${d.vehicle_color}</b></div>`:''}<div><small>السرعة</small><b>${x.speed??0} km/h</b></div><div><small>الحالة</small><b>${(x.speed??0)>1?'متحركة':'متوقفة'}</b></div><div><small>آخر تحديث</small><b>${fmtDateTime(x.created_at)}</b></div></div><div class="info-actions"><a href="/history/${id}">سجل المسار</a><button onclick="openService(${id},'${d.name.replaceAll("'","")}')">خدمات السيارة</button></div>`}
+async function selectVehicle(id,refresh=false){if(selected===id&&!refresh){clearVehicleSelection();return}selected=id;/* V9.16: selection is independent from mobile sheet visibility. */document.querySelectorAll('.vehicle-row').forEach(x=>x.classList.toggle('selected',+x.dataset.id===id));const d=devices.find(x=>x.platform_id===id),x=await(await fetch('/api/latest/'+id)).json();if(!x.available){showOffline(d,x);return}addOrUpdateMarker(d,x);if(libreEl.hidden){map.panTo({lat:+x.latitude,lng:+x.longitude});map.setZoom(16)}else if(libreMap){libreMap.flyTo({center:[+x.longitude,+x.latitude],zoom:16})}vehicleInfo.innerHTML=`<div class="info-top"><div><small>المركبة المختارة</small><h3>${d.name}</h3></div><div class="vehicle-metrics">${gsmHtml(x.gsm_signal)}${batteryHtml(x.battery_percent)}</div><span class="live-pill">LIVE</span></div><div class="info-grid"><div><small>ID</small><b>${id}</b></div><div><small>اللوحة</small><b>${d.plate||'-'}</b></div>${d.vehicle_model?`<div><small>الموديل / الكرت</small><b>${d.vehicle_model}</b></div>`:''}${d.vehicle_color?`<div><small>اللون</small><b>${d.vehicle_color}</b></div>`:''}<div><small>السرعة</small><b>${x.speed??0} km/h</b></div><div><small>الحالة</small><b>${(x.speed??0)>1?'متحركة':'متوقفة'}</b></div><div><small>آخر تحديث</small><b>${fmtDateTime(x.created_at)}</b></div></div><div class="info-actions"><a href="/history/${id}">سجل المسار</a><button onclick="openService(${id},'${d.name.replaceAll("'","")}')">خدمات السيارة</button></div>`}
 document.querySelectorAll('.vehicle-row:not(:disabled)').forEach(b=>b.onclick=()=>selectVehicle(+b.dataset.id));carSearch.oninput=e=>document.querySelectorAll('.vehicle-row').forEach(b=>b.style.display=b.dataset.search.toLowerCase().includes(e.target.value.toLowerCase())?'':'none');
 function openService(id,name){selected=id;serviceCar.textContent=name+' · ID '+id;commandState.hidden=true;serviceModal.classList.add('show');pollCommand(id)}
 const commandLabels={pending_stop:'بانتظار توقف آمن',queued:'قيد الإرسال',sent:'أُرسل — بانتظار تأكيد الجهاز',confirmed:'تم التأكيد من الجهاز',timed_out:'انتهت المهلة دون تأكيد',failed:'رفض الجهاز الأمر / فشل التنفيذ',cancelled:'تم الإلغاء'};let commandPoll=null;
@@ -81,70 +81,85 @@ restoreCar.onclick=async()=>{if(!selected)return;const d=devices.find(x=>x.platf
 openAudit.onclick=()=>auditModal.classList.add('show');document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.modal').classList.remove('show'));document.getElementById('closeRecentAlerts')?.addEventListener('click',()=>document.getElementById('recentAlerts')?.remove());
 const bell=document.getElementById('bellBtn'),np=document.getElementById('notificationPanel');if(np&&np.parentElement!==document.body)document.body.appendChild(np);bell?.addEventListener('click',async()=>{np.classList.add('show');await fetch('/api/notifications/read',{method:'POST'}).catch(()=>{});document.getElementById('bellBadge')?.remove();setTimeout(()=>np.querySelectorAll('.notification-item.unread').forEach(x=>x.classList.remove('unread')),700)});document.getElementById('closeNotifications')?.addEventListener('click',()=>np.classList.remove('show'));np?.addEventListener('click',e=>{if(e.target===np)np.classList.remove('show')});
 setInterval(()=>devices.filter(d=>d.state==='active'||d.state==='expiring').forEach(d=>fetch('/api/latest/'+d.platform_id).then(r=>r.json()).then(x=>{if(!x.available){removeMarker(d.platform_id);setSignalDot(d.platform_id,null);if(selected===d.platform_id)showOffline(d,x);return}setSignalDot(d.platform_id,x.gsm_signal);if(!hiddenVehicles.has(d.platform_id))addOrUpdateMarker(d,x);if(selected===d.platform_id)selectVehicle(d.platform_id,true)}).catch(()=>{})),5000);
-// Mobile only: vehicle selection and vehicle-card visibility are two independent states.
-// Desktop behavior is intentionally untouched.
+// V9.16 MOBILE ONLY: a real bottom-sheet owns visibility/drag state.
+// The vehicleInfo element only renders data. Selection never controls sheet visibility.
 (()=>{
  const vi=document.getElementById('vehicleInfo');
  if(!vi)return;
- const isMobile=()=>window.matchMedia('(max-width:900px)').matches;
- let panelOpen=true;
- let startY=null;
+ const mq=window.matchMedia('(max-width:900px)');
+ let sheet=null, handle=null, panelOpen=true, startY=null, currentY=null;
+ const isMobile=()=>mq.matches;
 
- window.setMobileVehiclePanelOpen=(open)=>{
+ function mountMobileSheet(){
+   if(!isMobile()||sheet)return;
+   sheet=document.createElement('div');
+   sheet.id='mobileVehicleSheet';
+   sheet.className='mobile-vehicle-sheet';
+   handle=document.createElement('button');
+   handle.type='button';
+   handle.className='mobile-sheet-handle';
+   handle.setAttribute('aria-label','إظهار أو إخفاء معلومات المركبة');
+   handle.innerHTML='<span></span>';
+   vi.parentNode.insertBefore(sheet,vi);
+   sheet.appendChild(handle);
+   sheet.appendChild(vi);
+   handle.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();setOpen(!panelOpen)});
+   sheet.addEventListener('pointerdown',onDown);
+   sheet.addEventListener('pointermove',onMove);
+   sheet.addEventListener('pointerup',onUp);
+   sheet.addEventListener('pointercancel',onUp);
+   applyState();
+ }
+ function unmountMobileSheet(){
+   if(!sheet)return;
+   const parent=sheet.parentNode;
+   parent.insertBefore(vi,sheet);
+   sheet.remove(); sheet=null; handle=null;
+   vi.style.transform='';
+ }
+ function applyState(){
+   if(!sheet)return;
+   sheet.classList.toggle('is-collapsed',!panelOpen);
+   sheet.setAttribute('data-open',panelOpen?'1':'0');
+   sheet.style.transform='';
+ }
+ function setOpen(open){
    if(!isMobile())return;
    panelOpen=!!open;
-   vi.classList.toggle('mobile-collapsed',!panelOpen);
-   vi.setAttribute('data-mobile-panel-open',panelOpen?'1':'0');
- };
-
- const ensureHandle=()=>{
-   if(!isMobile()||!selected)return;
-   let h=vi.querySelector('.mobile-vehicle-handle');
-   if(!h){
-     h=document.createElement('button');
-     h.type='button';
-     h.className='mobile-vehicle-handle';
-     h.setAttribute('aria-label','إظهار أو إخفاء معلومات المركبة');
-     h.innerHTML='<span></span>';
-     vi.prepend(h);
+   applyState();
+ }
+ function onDown(e){
+   if(!isMobile()||!selected||e.pointerType==='mouse')return;
+   startY=e.clientY; currentY=e.clientY;
+   try{sheet.setPointerCapture(e.pointerId)}catch(_){ }
+   sheet.classList.add('is-dragging');
+ }
+ function onMove(e){
+   if(startY===null||!sheet)return;
+   currentY=e.clientY;
+   const dy=currentY-startY;
+   // Follow the finger only downward while open, or upward while collapsed.
+   if((panelOpen&&dy>0)||(!panelOpen&&dy<0)){
+     e.preventDefault();
+     sheet.style.transform=`translateY(${dy}px)`;
    }
-   h.onclick=(e)=>{
-     e.preventDefault();e.stopPropagation();
-     window.setMobileVehiclePanelOpen(!panelOpen);
-   };
-   vi.classList.toggle('mobile-collapsed',!panelOpen);
- };
-
- // selectVehicle/showOffline replace innerHTML during live refresh. Restore only the handle
- // and the panel visibility; never change `selected` here.
- new MutationObserver(()=>{
-   if(!isMobile())return;
-   queueMicrotask(ensureHandle);
- }).observe(vi,{childList:true});
-
- vi.addEventListener('touchstart',(e)=>{
-   if(!isMobile()||!selected||e.touches.length!==1)return;
-   startY=e.touches[0].clientY;
- },{passive:true});
- vi.addEventListener('touchend',(e)=>{
-   if(!isMobile()||!selected||startY===null)return;
-   const endY=e.changedTouches[0]?.clientY??startY;
-   const dy=endY-startY;
-   startY=null;
-   if(dy>45)window.setMobileVehiclePanelOpen(false);
-   else if(dy<-45)window.setMobileVehiclePanelOpen(true);
- },{passive:true});
-
- window.addEventListener('resize',()=>{
-   if(!isMobile()){
-     vi.classList.remove('mobile-collapsed');
-     vi.removeAttribute('data-mobile-panel-open');
-   }else{
-     ensureHandle();
-     window.setMobileVehiclePanelOpen(panelOpen);
-   }
- });
- ensureHandle();
+ }
+ function onUp(e){
+   if(startY===null||!sheet)return;
+   const dy=(currentY??e.clientY)-startY;
+   startY=null; currentY=null;
+   sheet.classList.remove('is-dragging');
+   sheet.style.transform='';
+   if(dy>45)setOpen(false);
+   else if(dy<-45)setOpen(true);
+   else applyState();
+ }
+ window.setMobileVehiclePanelOpen=setOpen;
+ // Explicit helper: selecting/refreshing a vehicle does NOT call this.
+ window.getMobileVehiclePanelOpen=()=>panelOpen;
+ function syncMode(){ if(isMobile())mountMobileSheet(); else unmountMobileSheet(); }
+ if(mq.addEventListener)mq.addEventListener('change',syncMode); else mq.addListener(syncMode);
+ syncMode();
 })();
 (()=>{const fp=document.getElementById('fleetPanel'),ft=document.getElementById('mobileFleetToggle'),fn=document.getElementById('mobileFleetNav'),mn=document.getElementById('mobileMapNav');const toggleFleet=()=>fp.classList.toggle('mobile-open');if(ft)ft.onclick=toggleFleet;if(fn)fn.onclick=toggleFleet;if(mn)mn.onclick=()=>fp.classList.remove('mobile-open');let sy=null;fp?.addEventListener('touchstart',e=>{sy=e.touches[0]?.clientY??null},{passive:true});fp?.addEventListener('touchend',e=>{if(sy==null)return;const ey=e.changedTouches[0]?.clientY??sy;if(ey-sy>70)fp.classList.remove('mobile-open');sy=null},{passive:true});})();
 
