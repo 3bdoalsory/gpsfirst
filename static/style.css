@@ -683,3 +683,13 @@ html[dir="ltr"] .map-switch{direction:ltr}
  .vehicle-info.mobile-collapsed .mobile-vehicle-handle{height:22px;margin:0!important}
 }
 @media(min-width:901px){.mobile-vehicle-handle{display:none!important}}
+
+/* V9.13 — mobile selected-vehicle card: persistent swipe bottom sheet */
+@media(max-width:900px){
+  .vehicle-info{transform:translateY(var(--mobile-card-drag,0));will-change:transform;overscroll-behavior:contain}
+  .vehicle-info.mobile-dragging{transition:none!important}
+  .mobile-vehicle-handle{touch-action:none!important;user-select:none;-webkit-user-select:none}
+  .vehicle-info.mobile-collapsed{max-height:42px!important;min-height:42px!important;overflow:hidden!important;padding:8px 12px!important}
+  .vehicle-info.mobile-collapsed>*:not(.mobile-vehicle-handle){display:none!important}
+  .vehicle-info.mobile-collapsed .mobile-vehicle-handle{height:26px!important;margin:0!important}
+}

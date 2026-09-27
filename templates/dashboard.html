@@ -81,24 +81,75 @@ restoreCar.onclick=async()=>{if(!selected)return;const d=devices.find(x=>x.platf
 openAudit.onclick=()=>auditModal.classList.add('show');document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.modal').classList.remove('show'));document.getElementById('closeRecentAlerts')?.addEventListener('click',()=>document.getElementById('recentAlerts')?.remove());
 const bell=document.getElementById('bellBtn'),np=document.getElementById('notificationPanel');if(np&&np.parentElement!==document.body)document.body.appendChild(np);bell?.addEventListener('click',async()=>{np.classList.add('show');await fetch('/api/notifications/read',{method:'POST'}).catch(()=>{});document.getElementById('bellBadge')?.remove();setTimeout(()=>np.querySelectorAll('.notification-item.unread').forEach(x=>x.classList.remove('unread')),700)});document.getElementById('closeNotifications')?.addEventListener('click',()=>np.classList.remove('show'));np?.addEventListener('click',e=>{if(e.target===np)np.classList.remove('show')});
 setInterval(()=>devices.filter(d=>d.state==='active'||d.state==='expiring').forEach(d=>fetch('/api/latest/'+d.platform_id).then(r=>r.json()).then(x=>{if(!x.available){removeMarker(d.platform_id);setSignalDot(d.platform_id,null);if(selected===d.platform_id)showOffline(d,x);return}setSignalDot(d.platform_id,x.gsm_signal);if(!hiddenVehicles.has(d.platform_id))addOrUpdateMarker(d,x);if(selected===d.platform_id)selectVehicle(d.platform_id,true)}).catch(()=>{})),5000);
-// Mobile only: swipe the selected-vehicle card down to collapse it without clearing selection.
+// Mobile only: persistent bottom-sheet state for the selected vehicle card.
+// Live GPS refreshes rebuild vehicleInfo.innerHTML every 5s, so collapse state is kept
+// outside the card DOM and re-applied after every rebuild without clearing selection.
 (()=>{
  const vi=document.getElementById('vehicleInfo');
  if(!vi)return;
- let startY=null,startX=null;
  const mobile=()=>window.matchMedia('(max-width:900px)').matches;
- const ensureHandle=()=>{
-   if(!mobile()||!selected||vi.querySelector('.mobile-vehicle-handle'))return;
-   const h=document.createElement('button');
-   h.type='button';h.className='mobile-vehicle-handle';h.setAttribute('aria-label','طي معلومات المركبة');
-   h.innerHTML='<span></span>';
-   h.onclick=e=>{e.stopPropagation();vi.classList.toggle('mobile-collapsed')};
-   vi.prepend(h);
+ let collapsed=false;
+ let activePointer=null,startY=0,lastY=0,dragging=false;
+
+ const applyState=()=>{
+   if(!mobile()||!selected){
+     vi.classList.remove('mobile-collapsed','mobile-dragging');
+     vi.style.removeProperty('--mobile-card-drag');
+     return;
+   }
+   vi.classList.toggle('mobile-collapsed',collapsed);
  };
- new MutationObserver(()=>{if(selected){ensureHandle()}else vi.classList.remove('mobile-collapsed')}).observe(vi,{childList:true});
- vi.addEventListener('touchstart',e=>{if(!mobile()||!selected||e.touches.length!==1)return;startY=e.touches[0].clientY;startX=e.touches[0].clientX},{passive:true});
- vi.addEventListener('touchend',e=>{if(startY==null||!mobile()||!selected)return;const t=e.changedTouches[0],dy=t.clientY-startY,dx=Math.abs(t.clientX-startX);if(dx<80&&dy>55)vi.classList.add('mobile-collapsed');else if(dx<80&&dy<-45&&vi.classList.contains('mobile-collapsed'))vi.classList.remove('mobile-collapsed');startY=startX=null},{passive:true});
- window.addEventListener('resize',()=>{if(!mobile())vi.classList.remove('mobile-collapsed');else ensureHandle()});
+ const ensureHandle=()=>{
+   if(!mobile()||!selected)return;
+   let h=vi.querySelector('.mobile-vehicle-handle');
+   if(!h){
+     h=document.createElement('button');
+     h.type='button';
+     h.className='mobile-vehicle-handle';
+     h.setAttribute('aria-label','طي أو إظهار معلومات المركبة');
+     h.innerHTML='<span></span>';
+     vi.prepend(h);
+   }
+   h.onclick=e=>{e.preventDefault();e.stopPropagation();collapsed=!collapsed;applyState()};
+ };
+ const sync=()=>{ensureHandle();applyState()};
+
+ // Re-add the handle after selectVehicle()/showOffline() replaces innerHTML.
+ new MutationObserver(()=>queueMicrotask(sync)).observe(vi,{childList:true});
+
+ vi.addEventListener('pointerdown',e=>{
+   if(!mobile()||!selected||e.pointerType==='mouse')return;
+   activePointer=e.pointerId;startY=lastY=e.clientY;dragging=false;
+   try{vi.setPointerCapture(e.pointerId)}catch(_){ }
+ },{passive:true});
+ vi.addEventListener('pointermove',e=>{
+   if(e.pointerId!==activePointer||!mobile()||!selected)return;
+   lastY=e.clientY;
+   const dy=lastY-startY;
+   if(Math.abs(dy)>8)dragging=true;
+   if(dragging){
+     vi.classList.add('mobile-dragging');
+     vi.style.setProperty('--mobile-card-drag',`${Math.max(-35,Math.min(140,dy))}px`);
+     if(e.cancelable)e.preventDefault();
+   }
+ },{passive:false});
+ const finish=e=>{
+   if(e.pointerId!==activePointer)return;
+   const dy=(e.clientY??lastY)-startY;
+   if(dragging){
+     if(!collapsed&&dy>45)collapsed=true;
+     else if(collapsed&&dy<-35)collapsed=false;
+   }
+   activePointer=null;dragging=false;
+   vi.classList.remove('mobile-dragging');
+   vi.style.removeProperty('--mobile-card-drag');
+   applyState();
+ };
+ vi.addEventListener('pointerup',finish,{passive:true});
+ vi.addEventListener('pointercancel',finish,{passive:true});
+
+ window.addEventListener('resize',()=>{if(!mobile())collapsed=false;sync()});
+ sync();
 })();
 (()=>{const fp=document.getElementById('fleetPanel'),ft=document.getElementById('mobileFleetToggle'),fn=document.getElementById('mobileFleetNav'),mn=document.getElementById('mobileMapNav');const toggleFleet=()=>fp.classList.toggle('mobile-open');if(ft)ft.onclick=toggleFleet;if(fn)fn.onclick=toggleFleet;if(mn)mn.onclick=()=>fp.classList.remove('mobile-open');let sy=null;fp?.addEventListener('touchstart',e=>{sy=e.touches[0]?.clientY??null},{passive:true});fp?.addEventListener('touchend',e=>{if(sy==null)return;const ey=e.changedTouches[0]?.clientY??sy;if(ey-sy>70)fp.classList.remove('mobile-open');sy=null},{passive:true});})();
 
