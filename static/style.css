@@ -693,3 +693,18 @@ html[dir="ltr"] .map-switch{direction:ltr}
   .vehicle-info.mobile-collapsed>*:not(.mobile-vehicle-handle){display:none!important}
   .vehicle-info.mobile-collapsed .mobile-vehicle-handle{height:26px!important;margin:0!important}
 }
+
+/* V9.14 — MOBILE ONLY: selected vehicle != open information card */
+@media (max-width:900px){
+  .vehicle-info{touch-action:pan-y!important;transition:max-height .22s ease,padding .22s ease!important}
+  .mobile-vehicle-handle{display:flex!important;width:100%!important;height:24px!important;align-items:center!important;justify-content:center!important;background:transparent!important;border:0!important;padding:0!important;margin:-4px 0 5px!important;cursor:pointer!important}
+  .mobile-vehicle-handle span{display:block!important;width:54px!important;height:5px!important;border-radius:999px!important;background:rgba(205,238,250,.62)!important}
+  .vehicle-info.mobile-collapsed{max-height:36px!important;min-height:36px!important;height:36px!important;overflow:hidden!important;padding:6px 12px!important}
+  .vehicle-info.mobile-collapsed>*:not(.mobile-vehicle-handle){display:none!important}
+  .vehicle-info.mobile-collapsed .mobile-vehicle-handle{height:24px!important;margin:0!important}
+}
+@media (min-width:901px){
+  .mobile-vehicle-handle{display:none!important}
+  .vehicle-info.mobile-collapsed{max-height:none!important;height:auto!important;overflow:visible!important}
+  .vehicle-info.mobile-collapsed>*{display:initial}
+}
