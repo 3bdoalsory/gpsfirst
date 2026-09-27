@@ -672,19 +672,14 @@ html[dir="ltr"] .map-switch{direction:ltr}
 .topbar-bell{position:relative;display:inline-grid;place-items:center;min-width:38px;height:38px;border-radius:10px;background:#0b2235;color:#dff8ff;border:1px solid #29c7e84d;font-size:18px}.topbar-bell #bellBadge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;padding:0 4px;border-radius:999px;background:#ff536d;color:#fff;font-size:10px;display:grid;place-items:center}
 @media(max-width:900px){.mobile-bottom-nav{bottom:20px!important}.vehicle-info{bottom:88px!important}.fleet-panel{bottom:84px!important}.map-switch{left:8px!important;right:auto!important;top:8px!important;width:min(88vw,390px)!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important}.map-switch select{padding:7px 8px!important;font-size:13px!important}.fullscreen-map-btn{top:62px!important;left:10px!important}.topbar{gap:6px}.topbar nav{gap:5px!important}.topbar .nav-logout{padding:6px 7px!important;font-size:11px!important}.language-select{max-width:118px!important}.topbar-bell{min-width:34px;height:34px;padding:0!important}.brand-side{gap:6px!important}}
 
-/* 2026-09-28 focused fix: mobile vehicle card can collapse without losing selection */
-@media(max-width:900px){
- .vehicle-info{transition:transform .24s ease,max-height .24s ease;touch-action:pan-y;overflow:visible!important;padding-top:20px!important}
- .vehicle-info::before{content:"";position:absolute;top:7px;left:50%;transform:translateX(-50%);width:52px;height:5px;border-radius:999px;background:#8aa9b8;opacity:.75;z-index:2}
- .vehicle-info.mobile-collapsed{transform:translateY(calc(100% - 42px));max-height:42px!important;cursor:pointer}
- .vehicle-info.mobile-collapsed>*{visibility:hidden;pointer-events:none}
- .mobile-bottom-nav{z-index:1260!important}
-}
 
-/* 2026-09-28 two-fix patch: reliable mobile vehicle-card collapse */
+/* Mobile selected-vehicle card: swipe down to collapse; desktop is intentionally unchanged. */
 @media(max-width:900px){
- .vehicle-info{touch-action:pan-y!important;overscroll-behavior:contain;will-change:transform;}
- .vehicle-info.mobile-collapsed{transform:translateY(calc(100% - 38px))!important;max-height:38px!important;min-height:38px!important;overflow:hidden!important;padding:0!important;}
- .vehicle-info.mobile-collapsed::before{top:16px!important;width:58px!important;height:6px!important;opacity:1!important;}
- .vehicle-info.mobile-collapsed>*{visibility:hidden!important;pointer-events:none!important;}
+ .vehicle-info{transition:max-height .22s ease,padding .22s ease,transform .22s ease;touch-action:pan-y}
+ .mobile-vehicle-handle{display:grid;width:100%;height:22px;place-items:center;background:transparent!important;border:0!important;padding:0!important;margin:-7px 0 3px!important;cursor:pointer}
+ .mobile-vehicle-handle span{display:block;width:48px;height:5px;border-radius:999px;background:#8ca7b8aa}
+ .vehicle-info.mobile-collapsed{max-height:38px!important;min-height:38px!important;overflow:hidden!important;padding:8px 12px!important}
+ .vehicle-info.mobile-collapsed>*:not(.mobile-vehicle-handle){display:none!important}
+ .vehicle-info.mobile-collapsed .mobile-vehicle-handle{height:22px;margin:0!important}
 }
+@media(min-width:901px){.mobile-vehicle-handle{display:none!important}}
