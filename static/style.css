@@ -667,3 +667,7 @@ html[dir="ltr"] .map-switch{direction:ltr}
  .fullscreen-map-btn{top:62px!important;left:10px!important;right:auto!important;z-index:510!important;white-space:nowrap}
  html[dir="rtl"] .fullscreen-map-btn{left:10px!important;right:auto!important}
 }
+
+/* Aion Teck pending UI refinements 2026-09-28 */
+.topbar-bell{position:relative;display:inline-grid;place-items:center;min-width:38px;height:38px;border-radius:10px;background:#0b2235;color:#dff8ff;border:1px solid #29c7e84d;font-size:18px}.topbar-bell #bellBadge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;padding:0 4px;border-radius:999px;background:#ff536d;color:#fff;font-size:10px;display:grid;place-items:center}
+@media(max-width:900px){.mobile-bottom-nav{bottom:20px!important}.vehicle-info{bottom:88px!important}.fleet-panel{bottom:84px!important}.map-switch{left:8px!important;right:auto!important;top:8px!important;width:min(88vw,390px)!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important}.map-switch select{padding:7px 8px!important;font-size:13px!important}.fullscreen-map-btn{top:62px!important;left:10px!important}.topbar{gap:6px}.topbar nav{gap:5px!important}.topbar .nav-logout{padding:6px 7px!important;font-size:11px!important}.language-select{max-width:118px!important}.topbar-bell{min-width:34px;height:34px;padding:0!important}.brand-side{gap:6px!important}}

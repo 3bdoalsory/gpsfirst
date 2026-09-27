@@ -9,7 +9,7 @@ from database import init as init_database
 app = Flask(__name__)
 app.secret_key = os.getenv("GPS_SECRET_KEY", "dev-change-me")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
-MAP_PROVIDER = os.getenv("MAP_PROVIDER", "openfree").strip().lower()
+MAP_PROVIDER = os.getenv("MAP_PROVIDER", "osm").strip().lower()
 MAPBOX_ACCESS_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN", "").strip()
 DB = Path(os.getenv("GPS_DB_PATH", str(Path(__file__).with_name("gpsplatform.db"))))
 init_database()
@@ -62,14 +62,14 @@ def point_in_polygon(lat,lon,poly):
     return inside
 
 def parse_device_metrics(raw):
-    """SinoTrack V8: third field from end = GSM 0..31; last field = battery %."""
+    """SinoTrack V8 tail: ..., satellites, GSM, external_voltage_x10, backup_battery_percent."""
     try:
         parts=str(raw or '').strip().rstrip('#').split(',')
-        if len(parts) < 4: return None, None
-        gsm=int(float(parts[-3])); battery=int(float(parts[-1]))
-        return max(0,min(31,gsm)), max(0,min(100,battery))
+        if len(parts) < 4: return None, None, None
+        gsm=int(float(parts[-3])); voltage_raw=int(float(parts[-2])); battery=int(float(parts[-1]))
+        return max(0,min(31,gsm)), max(0,min(100,battery)), max(0, voltage_raw) / 10.0
     except Exception:
-        return None, None
+        return None, None, None
 
 def gsm_status(value):
     try:
@@ -376,11 +376,12 @@ def tracker_ingest():
         if device_time:
             device_time=datetime.fromisoformat(device_time).replace(tzinfo=None).isoformat(timespec="seconds")
         raw_data=payload.get("raw_data",payload.get("raw",json.dumps(payload,ensure_ascii=False)))
-        gsm=payload.get("gsm_signal"); battery=payload.get("battery_percent")
-        if gsm is None or battery is None:
-            rg,rb=parse_device_metrics(raw_data)
-            gsm=rg if gsm is None else gsm; battery=rb if battery is None else battery
+        gsm=payload.get("gsm_signal"); battery=payload.get("battery_percent"); external_voltage=payload.get("external_voltage")
+        if gsm is None or battery is None or external_voltage is None:
+            rg,rb,rv=parse_device_metrics(raw_data)
+            gsm=rg if gsm is None else gsm; battery=rb if battery is None else battery; external_voltage=rv if external_voltage is None else external_voltage
         gsm=int(gsm) if gsm is not None else None; battery=int(battery) if battery is not None else None
+        external_voltage=float(external_voltage) if external_voltage is not None else None
         if not did or not (-90<=lat<=90) or not (-180<=lon<=180): raise ValueError
     except Exception:
         return jsonify(ok=False,error="invalid_payload"),400
@@ -405,13 +406,26 @@ def tracker_ingest():
             kind=f'overspeed:{d["id"]}:{bucket}'
             if not c.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind=?",(d["user_id"],kind)).fetchone():
                 c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"تجاوز السرعة",f'{vehicle_label(d)} تجاوزت السرعة المحددة: {speed:.0f} km/h'))
-        power_disc = payload.get("power_disconnected") is True or payload.get("external_power") in (False,0,"0","off","disconnected")
-        if power_disc:
-            bucket=datetime.utcnow().strftime("%Y%m%d%H")
-            kind=f'power_disconnect:{d["id"]}:{bucket}'
-            if not c.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind=?",(d["user_id"],kind)).fetchone():
-                now=datetime.utcnow().strftime("%d/%m/%Y %H:%M")
-                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"فصل كهرباء جهاز GPS",f'{vehicle_label(d)} · تم رصد فصل التغذية بتاريخ ووقت {now}'))
+        # On this V8 protocol the second field from the end is external supply voltage x10.
+        # Example: 124 = 12.4V, while 0 means the main GPS supply was cut and the tracker is on backup battery.
+        explicit_disc = payload.get("power_disconnected") is True or payload.get("external_power") in (False,0,"0","off","disconnected")
+        power_disc = explicit_disc or (external_voltage is not None and external_voltage <= 0.1)
+        state_key=f'power_state:{d["id"]}'
+        prev=c.execute("SELECT value FROM system_settings WHERE key=?",(state_key,)).fetchone()
+        prev_state=prev["value"] if prev else None
+        state='off' if power_disc else 'on'
+        if prev_state != state:
+            event_time=(device_time.replace('T',' ')[:16] if device_time else datetime.now().strftime("%Y-%m-%d %H:%M"))
+            where=f" · الموقع {lat:.6f}, {lon:.6f}"
+            if power_disc:
+                kind=f'power_disconnect:{d["id"]}:{datetime.utcnow().strftime("%Y%m%d%H%M%S")}'
+                msg=f'{vehicle_label(d)} · تم قطع التغذية الرئيسية عن جهاز GPS · التاريخ والوقت {event_time}{where}'
+                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"انقطاع كهرباء جهاز GPS",msg))
+            elif prev_state == 'off':
+                kind=f'power_restore:{d["id"]}:{datetime.utcnow().strftime("%Y%m%d%H%M%S")}'
+                msg=f'{vehicle_label(d)} · تمت إعادة التغذية الرئيسية لجهاز GPS · التاريخ والوقت {event_time}{where}'
+                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"عودة كهرباء جهاز GPS",msg))
+            c.execute("INSERT INTO system_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(state_key,state))
     refresh_pending_immobilize(c,d)
     process_geofences(c,d,lat,lon)
     cleanup_old_gps(c)
