@@ -415,16 +415,19 @@ def tracker_ingest():
         prev_state=prev["value"] if prev else None
         state='off' if power_disc else 'on'
         if prev_state != state:
-            event_time=(device_time.replace('T',' ')[:16] if device_time else datetime.now().strftime("%Y-%m-%d %H:%M"))
-            where=f" · الموقع {lat:.6f}, {lon:.6f}"
+            event_time=(device_time.replace('T',' ')[:19] if device_time else datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             if power_disc:
                 kind=f'power_disconnect:{d["id"]}:{datetime.utcnow().strftime("%Y%m%d%H%M%S")}'
-                msg=f'{vehicle_label(d)} · تم قطع التغذية الرئيسية عن جهاز GPS · التاريخ والوقت {event_time}{where}'
-                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"انقطاع كهرباء جهاز GPS",msg))
+                msg=f'{vehicle_label(d)} · تم قطع التغذية الرئيسية عن جهاز GPS · التاريخ والوقت {event_time}'
+                c.execute("""INSERT INTO notifications(user_id,device_pk,kind,title,message,latitude,longitude,event_time)
+                             VALUES(?,?,?,?,?,?,?,?)""",
+                          (d["user_id"],d["id"],kind,"انقطاع كهرباء جهاز GPS",msg,lat,lon,event_time))
             elif prev_state == 'off':
                 kind=f'power_restore:{d["id"]}:{datetime.utcnow().strftime("%Y%m%d%H%M%S")}'
-                msg=f'{vehicle_label(d)} · تمت إعادة التغذية الرئيسية لجهاز GPS · التاريخ والوقت {event_time}{where}'
-                c.execute("INSERT INTO notifications(user_id,device_pk,kind,title,message) VALUES(?,?,?,?,?)",(d["user_id"],d["id"],kind,"عودة كهرباء جهاز GPS",msg))
+                msg=f'{vehicle_label(d)} · تمت إعادة التغذية الرئيسية لجهاز GPS · التاريخ والوقت {event_time}'
+                c.execute("""INSERT INTO notifications(user_id,device_pk,kind,title,message,latitude,longitude,event_time)
+                             VALUES(?,?,?,?,?,?,?,?)""",
+                          (d["user_id"],d["id"],kind,"عودة كهرباء جهاز GPS",msg,lat,lon,event_time))
             c.execute("INSERT INTO system_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(state_key,state))
     refresh_pending_immobilize(c,d)
     process_geofences(c,d,lat,lon)
@@ -473,8 +476,17 @@ def history_api(pid):
     rows=c.execute("""SELECT latitude,longitude,speed,heading,acc,created_at FROM gps_data
                       WHERE device_id=? AND created_at BETWEEN ? AND ?
                       ORDER BY created_at""",(d["device_id"],request.args["start"],request.args["end"])).fetchall()
+    power_rows=c.execute("""SELECT id,kind,title,message,latitude,longitude,
+                                   COALESCE(event_time,created_at) event_time
+                            FROM notifications
+                            WHERE user_id=? AND device_pk=? AND kind LIKE 'power_disconnect:%'
+                              AND COALESCE(event_time,created_at) BETWEEN ? AND ?
+                              AND latitude IS NOT NULL AND longitude IS NOT NULL
+                            ORDER BY COALESCE(event_time,created_at)""",
+                         (session["user_id"],d["id"],request.args["start"],request.args["end"])).fetchall()
     c.close()
     pts=[dict(r) for r in rows if r["latitude"] is not None and r["longitude"] is not None]
+    power_events=[dict(r) for r in power_rows]
     stops=[]; start=None
     for i,p in enumerate(pts):
         if (p["speed"] or 0)<=1 and start is None: start=i
@@ -506,7 +518,7 @@ def history_api(pid):
     if start_time and end_time:
         try: duration_seconds=max(0,int((datetime.fromisoformat(end_time)-datetime.fromisoformat(start_time)).total_seconds()))
         except Exception: pass
-    return jsonify(points=pts,stops=stops,distance_km=round(distance_km,2),max_speed=round(max_speed,1),avg_speed=round(avg_speed,1),total_stop_minutes=total_stop_minutes,start_time=start_time,end_time=end_time,duration_seconds=duration_seconds)
+    return jsonify(points=pts,stops=stops,power_events=power_events,distance_km=round(distance_km,2),max_speed=round(max_speed,1),avg_speed=round(avg_speed,1),total_stop_minutes=total_stop_minutes,start_time=start_time,end_time=end_time,duration_seconds=duration_seconds)
 
 @app.route("/geofences",methods=["GET","POST"])
 @login_required()
@@ -614,6 +626,28 @@ def admin_return():
     session["role"]="admin"
     session.modified=True
     return redirect("/admin#accounts")
+
+@app.get("/api/notifications")
+@login_required()
+def notifications_api():
+    if session.get("role") == "admin": return jsonify(ok=False),403
+    c=db()
+    sync_subscription_notifications(c, session["user_id"])
+    c.commit()
+    rows=c.execute("""SELECT id,kind,title,message,is_read,created_at,latitude,longitude,event_time
+                      FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 200""",
+                   (session["user_id"],)).fetchall()
+    out=[]
+    for r in rows:
+        x=dict(r)
+        if x.get("latitude") is not None and x.get("longitude") is not None:
+            x["location_url"]=f'https://www.google.com/maps/search/?api=1&query={x["latitude"]},{x["longitude"]}'
+        else:
+            x["location_url"]=None
+        out.append(x)
+    unread=sum(1 for x in out if not x["is_read"])
+    c.close()
+    return jsonify(ok=True,notifications=out,unread_count=unread)
 
 @app.post("/api/notifications/read")
 @login_required()

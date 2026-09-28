@@ -714,3 +714,8 @@ html[dir="ltr"] .map-switch{direction:ltr}
   .mobile-vehicle-handle{display:none!important}
 }
 @media (min-width:901px){.mobile-vehicle-sheet,.mobile-sheet-handle{display:none!important}}
+
+.notification-location-link{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-weight:700;text-decoration:none;color:#36c9ff}
+.notification-location-link:hover{text-decoration:underline}
+#bellBtn.has-new-notification{animation:aionBellPulse 1s ease-in-out 2}
+@keyframes aionBellPulse{50%{transform:scale(1.12)}}

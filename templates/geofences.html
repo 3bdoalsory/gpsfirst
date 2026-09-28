@@ -13,7 +13,10 @@
 <label><input type="checkbox" name="is_active" {% if f.is_active %}checked{% endif %}> فعالة</label><button>حفظ التعديل</button></form>
 <form method="post" action="/geofences/{{f.id}}/delete" onsubmit="return confirm('حذف الزون؟')"><button class="delete-zone">حذف</button></form></div>{% else %}<div class="empty glass">لا يوجد زون محفوظ بعد.</div>{% endfor %}</div></div>{% endblock %}
 {% block scripts %}<script>
+const MAPBOX_TOKEN={{mapbox_access_token|tojson}};let prefProvider='mapbox',prefStyle='streets-v12';try{prefProvider=localStorage.getItem('aion_map_provider')||'mapbox';prefStyle=localStorage.getItem('aion_map_style')||'streets-v12'}catch(e){}
 const map=new google.maps.Map(document.getElementById('gmap'),{center:{lat:33.97,lng:36.67},zoom:12,mapId:'b6a317a50c27f0b7acbd8f73',mapTypeId:'roadmap',mapTypeControl:true,streetViewControl:false,fullscreenControl:false});
+function rasterType(url,name){return new google.maps.ImageMapType({getTileUrl:(c,z)=>url.replace('{z}',z).replace('{x}',c.x).replace('{y}',c.y),tileSize:new google.maps.Size(256,256),maxZoom:20,name})}
+function applySavedBasemap(){if(prefProvider==='google'){map.setMapTypeId(prefStyle||'roadmap');return}if(prefProvider==='osm'){map.mapTypes.set('aion_saved',rasterType('https://tile.openstreetmap.org/{z}/{x}/{y}.png','OSM'));map.setMapTypeId('aion_saved');return}if(prefProvider==='mapbox'&&MAPBOX_TOKEN){const st=prefStyle||'streets-v12',u=`https://api.mapbox.com/styles/v1/mapbox/${st}/tiles/256/{z}/{x}/{y}?access_token=${MAPBOX_TOKEN}`;map.mapTypes.set('aion_saved',rasterType(u,'Mapbox'));map.setMapTypeId('aion_saved');return}const st=prefStyle||'liberty',u=`https://tiles.openfreemap.org/styles/${st}/{z}/{x}/{y}.png`;map.mapTypes.set('aion_saved',rasterType(u,'OpenFreeMap'));map.setMapTypeId('aion_saved')}applySavedBasemap();
 let newPoly=null,drawPoints=[],firstMarker=null,drawing=false;const saved={};
 const createColor=()=>document.querySelector('#geoForm .zone-color')?.value||'#29c7e8';
 function arrFromPath(path){const a=[];for(let i=0;i<path.getLength();i++){const p=path.getAt(i);a.push([p.lat(),p.lng()])}return a}

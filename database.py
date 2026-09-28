@@ -166,6 +166,14 @@ def init():
     if "admin_notes" not in dcols:
         c.execute("ALTER TABLE devices ADD COLUMN admin_notes TEXT DEFAULT ''")
 
+    ncols = {r[1] for r in c.execute("PRAGMA table_info(notifications)")}
+    if "latitude" not in ncols:
+        c.execute("ALTER TABLE notifications ADD COLUMN latitude REAL")
+    if "longitude" not in ncols:
+        c.execute("ALTER TABLE notifications ADD COLUMN longitude REAL")
+    if "event_time" not in ncols:
+        c.execute("ALTER TABLE notifications ADD COLUMN event_time TIMESTAMP")
+
     gpscols = {r[1] for r in c.execute("PRAGMA table_info(gps_data)")}
     if "acc" not in gpscols:
         c.execute("ALTER TABLE gps_data ADD COLUMN acc INTEGER")

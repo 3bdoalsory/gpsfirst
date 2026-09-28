@@ -1,10 +1,10 @@
 {% extends "base.html" %}{% block head %}
 <script src="https://maps.googleapis.com/maps/api/js?key={{google_maps_api_key|e}}&v=weekly&language={{current_lang}}"></script>
 <link href="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.css" rel="stylesheet"><script src="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.js"></script>
-<link href="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.css" rel="stylesheet"><script src="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.js"></script>{% endblock %}
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.css" rel="stylesheet"><script src="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.js"></script><script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.3.0/mapbox-gl-rtl-text.js"></script>{% endblock %}
 {% block content %}{% if session.get("view_as_client") and session.get("admin_return_id") %}<div class="view-as-banner"><span>أنت تشاهد حساب العميل {{session.username}} كأدمن</span><form method="post" action="/admin/return"><button type="submit">العودة إلى لوحة الأدمن</button></form></div>{% endif %}<div class="client-shell"><button class="mobile-fleet-toggle" id="mobileFleetToggle">🚗 المركبات</button>
 <aside class="fleet-panel glass" id="fleetPanel"><div class="panel-head"><div><small>MY FLEET</small><h2>المركبات</h2></div><div class="fleet-head-actions"><span class="counter">{{devices|length}}</span></div></div>
-<div id="notificationPanel" class="notification-modal modal"><div class="modal-card notification-modal-card glass"><div class="notification-head"><b>الإشعارات</b><button type="button" id="closeNotifications">×</button></div>{% for n in notes %}<div class="notification-item {% if not n.is_read %}unread{% endif %}"><b>{{n.title}}</b><span>{{n.message}}</span><small>{{n.created_at|dmytime}}</small></div>{% else %}<div class="notification-empty">لا توجد إشعارات</div>{% endfor %}</div></div>
+<div id="notificationPanel" class="notification-modal modal"><div class="modal-card notification-modal-card glass"><div class="notification-head"><b>الإشعارات</b><button type="button" id="closeNotifications">×</button></div>{% for n in notes %}<div class="notification-item {% if not n.is_read %}unread{% endif %}" data-notification-id="{{n.id}}"><b>{{n.title}}</b><span>{{n.message}}</span>{% if n.latitude is not none and n.longitude is not none %}<a class="notification-location-link" href="https://www.google.com/maps/search/?api=1&query={{n.latitude}},{{n.longitude}}" target="_blank" rel="noopener">📍 عرض موقع الحدث</a>{% endif %}<small>{{n.created_at|dmytime}}</small></div>{% else %}<div class="notification-empty">لا توجد إشعارات</div>{% endfor %}</div></div>
 <div class="search"><span>⌕</span><input id="carSearch" placeholder="ابحث بالاسم أو ID أو رقم اللوحة"></div>
 <div class="fleet-summary glass" id="fleetSummary"></div><div id="vehicleList">{% for d in devices %}<button class="vehicle-row {{d.state}}" data-id="{{d.platform_id}}" data-search="{{d.name}} {{d.platform_id}} {{d.plate or ''}}" {% if d.state in ['expired','temporary'] %}disabled{% endif %}>
 <div class="vehicle-icon">⌁</div><div class="vehicle-text"><b>{{d.name}}</b><small>ID {{d.platform_id}} · {% if d.state=='temporary' %}إيقاف مؤقت{% elif d.state=='expired' %}الاشتراك منتهي{% else %}فعال{% endif %}<br>لوحة {{d.plate or '-'}}<br><span class="subscription-date {% if d.subscription_soon %}soon{% endif %}">انتهاء الاشتراك: {{d.subscription_end|dmy}}</span></small></div>
@@ -32,7 +32,8 @@ const map=new google.maps.Map(document.getElementById('map'),{center:{lat:33.97,
 
 const providerSelect=document.getElementById('mapProviderSelect'), styleSelect=document.getElementById('mapStyleSelect'), libreEl=document.getElementById('libreMap');
 const MAPBOX_TOKEN={{mapbox_access_token|tojson}};
-const providerStyles={osm:[['osm','Map'],['satellite','Satellite']],google:[['roadmap','Map'],['satellite','Satellite'],['hybrid','Hybrid'],['terrain','Terrain']],openfree:[['liberty','Liberty'],['positron','Positron'],['bright','Bright'],['dark','Dark'],['fiord','Fiord']],mapbox:[['streets-v12','Map'],['satellite-streets-v12','Satellite']]};
+try{if(window.mapboxgl?.setRTLTextPlugin)mapboxgl.setRTLTextPlugin('https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.3.0/mapbox-gl-rtl-text.js',null,true)}catch(e){console.warn('RTL plugin:',e)}
+const providerStyles={osm:[['osm','Map']],google:[['roadmap','Map'],['satellite','Satellite'],['hybrid','Hybrid'],['terrain','Terrain']],openfree:[['liberty','Liberty'],['positron','Positron'],['bright','Bright'],['dark','Dark'],['fiord','Fiord']],mapbox:[['streets-v12','Map'],['satellite-streets-v12','Satellite']]};
 let libreMap=null,libreKind=null,libreMarkers={},libreFenceIds=[];
 function openFreeStyle(id){return `https://tiles.openfreemap.org/styles/${id}`}
 function mapboxStyle(id){return `mapbox://styles/mapbox/${id}`}
@@ -56,15 +57,20 @@ function updateLibreMarker(d,x){if(!libreMap||!x||x.latitude==null)return;if(lib
 function refreshLibreMarkerHeadings(){Object.entries(libreMarkers).forEach(([id,mk])=>{const arrow=mk.getElement()?.querySelector('.platform-car-arrow');if(arrow)arrow.style.transform=`rotate(${libreVisualHeading(markerHeadings[id])}deg)`})}
 function removeLibreMarker(id){if(libreMarkers[id]){libreMarkers[id].remove();delete libreMarkers[id]}}
 function populateStyles(){styleSelect.innerHTML='';(providerStyles[providerSelect.value]||[]).forEach(([v,n])=>{const o=document.createElement('option');o.value=v;o.textContent=n;styleSelect.appendChild(o)});applyMapProvider()}
+function saveMapPrefs(){try{localStorage.setItem('aion_map_provider',providerSelect.value);localStorage.setItem('aion_map_style',styleSelect.value)}catch(e){}}
 function applyMapProvider(){const p=providerSelect.value,st=styleSelect.value;const googleEl=document.getElementById('map');
- if(p==='google'||(p==='osm'&&st==='satellite')){
-   libreEl.hidden=true;googleEl.hidden=false;map.setMapTypeId(p==='osm'?'satellite':(st||'roadmap'));google.maps.event.trigger(map,'resize');return;
+ if(p==='google'){
+   libreEl.hidden=true;googleEl.hidden=false;map.setMapTypeId(st||'roadmap');google.maps.event.trigger(map,'resize');saveMapPrefs();return;
  }
  googleEl.hidden=true;libreEl.hidden=false;
  const style=p==='osm'?osmStyle():(p==='openfree'?openFreeStyle(st):mapboxStyle(st));
- ensureLibre(style,p);setTimeout(()=>libreMap&&libreMap.resize(),120)
+ ensureLibre(style,p);saveMapPrefs();setTimeout(()=>libreMap&&libreMap.resize(),120)
 }
-providerSelect.value='osm';providerSelect.addEventListener('change',populateStyles);styleSelect.addEventListener('change',applyMapProvider);populateStyles();
+let savedProvider='mapbox',savedStyle='streets-v12';try{savedProvider=localStorage.getItem('aion_map_provider')||'mapbox';savedStyle=localStorage.getItem('aion_map_style')||'streets-v12'}catch(e){}
+if(!providerStyles[savedProvider])savedProvider='mapbox';providerSelect.value=savedProvider;
+providerSelect.addEventListener('change',()=>{populateStyles()});
+styleSelect.addEventListener('change',applyMapProvider);
+populateStyles();if([...styleSelect.options].some(o=>o.value===savedStyle)){styleSelect.value=savedStyle;applyMapProvider()}
 fences.forEach(f=>{if(f.polygon&&f.polygon.length>=3)new google.maps.Polygon({map,paths:f.polygon.map(p=>({lat:+p[0],lng:+p[1]})),strokeColor:f.color||'#29c7e8',strokeOpacity:.8,strokeWeight:2,fillColor:f.color||'#29c7e8',fillOpacity:.12})});
 
 function bindMarker(id,m,name){m.setLabel({text:name,color:'#eafaff',fontSize:'12px',fontWeight:'700',className:'google-vehicle-label'});m.addListener('click',()=>selectVehicle(id));return m}
@@ -86,7 +92,25 @@ async function pollCommand(id){clearInterval(commandPoll);const run=async()=>{tr
 recordStop.onclick=async()=>{if(!selected)return;const d=devices.find(x=>x.platform_id===selected);if(!confirm(`تأكيد إيقاف المركبة\n\n${d.name} · ID ${d.platform_id} · لوحة ${d.plate||'-'}\n\nإذا كانت متحركة سيبقى الطلب بانتظار توقفها الآمن.`))return;let x=await(await fetch('/service/'+selected,{method:'POST'})).json();showCommandState(x.status,x.message||'');if(x.ok)pollCommand(selected);else alert(x.message||x.error||'تعذر تنفيذ الطلب')};
 restoreCar.onclick=async()=>{if(!selected)return;const d=devices.find(x=>x.platform_id===selected);if(!confirm(`تأكيد إعادة تشغيل المركبة\n\n${d.name} · ID ${d.platform_id} · لوحة ${d.plate||'-'}`))return;let x=await(await fetch('/service/'+selected+'/restore',{method:'POST'})).json();showCommandState(x.status,x.message||'');if(x.ok)pollCommand(selected);else alert(x.message||x.error||'تعذر تنفيذ الطلب')};
 openAudit.onclick=()=>auditModal.classList.add('show');document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.modal').classList.remove('show'));document.getElementById('closeRecentAlerts')?.addEventListener('click',()=>document.getElementById('recentAlerts')?.remove());
-const bell=document.getElementById('bellBtn'),np=document.getElementById('notificationPanel');if(np&&np.parentElement!==document.body)document.body.appendChild(np);bell?.addEventListener('click',async()=>{np.classList.add('show');await fetch('/api/notifications/read',{method:'POST'}).catch(()=>{});document.getElementById('bellBadge')?.remove();setTimeout(()=>np.querySelectorAll('.notification-item.unread').forEach(x=>x.classList.remove('unread')),700)});document.getElementById('closeNotifications')?.addEventListener('click',()=>np.classList.remove('show'));np?.addEventListener('click',e=>{if(e.target===np)np.classList.remove('show')});
+const bell=document.getElementById('bellBtn'),np=document.getElementById('notificationPanel');if(np&&np.parentElement!==document.body)document.body.appendChild(np);
+function escHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function notificationHtml(n){const link=n.location_url?`<a class="notification-location-link" href="${escHtml(n.location_url)}" target="_blank" rel="noopener">📍 عرض موقع الحدث</a>`:'';return `<div class="notification-item ${n.is_read?'':'unread'}" data-notification-id="${n.id}"><b>${escHtml(n.title)}</b><span>${escHtml(n.message)}</span>${link}<small>${escHtml(fmtDateTime(n.created_at))}</small></div>`}
+let lastNotificationId=Math.max(0,...[...np.querySelectorAll('[data-notification-id]')].map(x=>Number(x.dataset.notificationId)||0));
+function setBellCount(n){let b=document.getElementById('bellBadge');if(n>0){if(!b){b=document.createElement('span');b.id='bellBadge';b.className='bell-badge';bell?.appendChild(b)}b.textContent=n>99?'99+':String(n)}else b?.remove()}
+async function refreshNotifications(){
+ try{
+   const r=await fetch('/api/notifications',{cache:'no-store'});if(!r.ok)return;const x=await r.json();if(!x.ok)return;
+   const newest=Math.max(0,...x.notifications.map(n=>Number(n.id)||0));
+   const hadNew=newest>lastNotificationId;lastNotificationId=Math.max(lastNotificationId,newest);
+   np.querySelectorAll('.notification-item,.notification-empty').forEach(e=>e.remove());
+   const head=np.querySelector('.notification-head');x.notifications.slice().reverse().forEach(n=>head.insertAdjacentHTML('afterend',notificationHtml(n)));
+   setBellCount(x.unread_count||0);
+   if(hadNew&&!np.classList.contains('show'))bell?.classList.add('has-new-notification');
+ }catch(e){}
+}
+bell?.addEventListener('click',async()=>{np.classList.add('show');bell?.classList.remove('has-new-notification');await fetch('/api/notifications/read',{method:'POST'}).catch(()=>{});setBellCount(0);setTimeout(()=>np.querySelectorAll('.notification-item.unread').forEach(x=>x.classList.remove('unread')),300)});
+document.getElementById('closeNotifications')?.addEventListener('click',()=>np.classList.remove('show'));np?.addEventListener('click',e=>{if(e.target===np)np.classList.remove('show')});
+refreshNotifications();setInterval(refreshNotifications,5000);
 setInterval(()=>devices.filter(d=>d.state==='active'||d.state==='expiring').forEach(d=>fetch('/api/latest/'+d.platform_id).then(r=>r.json()).then(x=>{if(!x.available){removeMarker(d.platform_id);setSignalDot(d.platform_id,null);if(selected===d.platform_id)showOffline(d,x);return}setSignalDot(d.platform_id,x.gsm_signal);if(!hiddenVehicles.has(d.platform_id))addOrUpdateMarker(d,x);if(selected===d.platform_id)selectVehicle(d.platform_id,true)}).catch(()=>{})),5000);
 // V9.16 MOBILE ONLY: a real bottom-sheet owns visibility/drag state.
 // The vehicleInfo element only renders data. Selection never controls sheet visibility.
